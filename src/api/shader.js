@@ -137,9 +137,12 @@ export class Shader {
     if (!adapter) throw new Error("No WebGPU adapter available");
     this._device = await adapter.requestDevice();
 
-    // Create canvas overlaid on the scene
+    // Create canvas overlaid on the scene — parented to fsContainer so it
+    // fills the full WM output window regardless of canvasWrapper's 16:9 constraint.
     this._canvas = document.createElement("canvas");
+    const fsContainer = document.getElementById("fsContainer");
     const wrapper = document.getElementById("canvasWrapper");
+    const parent = fsContainer ?? wrapper;
     const ref = wrapper?.querySelector("canvas");
     this._canvas.width = ref?.width ?? 1600;
     this._canvas.height = ref?.height ?? 900;
@@ -153,7 +156,19 @@ export class Shader {
       opacity: String(this._opacity),
       pointerEvents: "none",
     });
-    wrapper?.appendChild(this._canvas);
+    parent?.appendChild(this._canvas);
+
+    // Observe canvasWrapper for dims — always 16:9, updates when WM window resizes.
+    this._resizeObserver = new ResizeObserver(() => {
+      const ref = wrapper ?? parent;
+      const w = Math.round((ref?.clientWidth ?? 0) * devicePixelRatio) || 1600;
+      const h = Math.round((ref?.clientHeight ?? 0) * devicePixelRatio) || 900;
+      if (this._canvas.width !== w || this._canvas.height !== h) {
+        this._canvas.width = w;
+        this._canvas.height = h;
+      }
+    });
+    this._resizeObserver.observe(wrapper ?? parent);
 
     const format = navigator.gpu.getPreferredCanvasFormat();
     this._ctx = this._canvas.getContext("webgpu");
@@ -374,6 +389,8 @@ export class Shader {
   _destroy() {
     this.stop();
     window.__ar_keepAlive?.delete(this);
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
     this._canvas?.remove();
     this._videoTex?.destroy();
     this._uniformBuf?.destroy();
@@ -390,8 +407,12 @@ export class Shader {
 export class ShaderFX {
   // ── Factory methods (create, don't start — for composing with .start()/.stop()/etc.) ──
 
-  static cameraShader(effect = 'greyscale') {
-    return new Shader(CAMERA_PRESETS[effect] ?? CAMERA_PRESETS.greyscale, { video: window.__ar_video });
+  // camOrEffect: CameraStream from Camera.open(), or an effect name string (uses toolbar camera)
+  static cameraShader(camOrEffect = 'greyscale', effect = 'greyscale') {
+    const isStream = camOrEffect && typeof camOrEffect !== 'string';
+    const src = isStream ? camOrEffect : window.__ar_video;
+    const eff = isStream ? effect : camOrEffect;
+    return new Shader(CAMERA_PRESETS[eff] ?? CAMERA_PRESETS.greyscale, { video: src });
   }
 
   static videoShader(src, effect = 'greyscale') {
@@ -404,16 +425,23 @@ export class ShaderFX {
 
   static windowShader(name = 'editor', effect = 'greyscale') {
     const SELECTORS = { editor: '.CodeMirror', console: '#console' };
-    const src = name === 'canvas'
-      ? window.getCanvas(0)
-      : window.captureWindow?.(SELECTORS[name] ?? SELECTORS.editor);
+    let src;
+    if (name === 'canvas') src = window.getCanvas(0);
+    else src = window.captureWindow?.(SELECTORS[name] ?? SELECTORS.editor);
+    return new Shader(CAMERA_PRESETS[effect] ?? CAMERA_PRESETS.greyscale, { video: src });
+  }
+
+  static micVizShader(effect = 'greyscale') {
+    const src = window.__ar_mic_viz ?? null;
     return new Shader(CAMERA_PRESETS[effect] ?? CAMERA_PRESETS.greyscale, { video: src });
   }
 
   // ── Shorthand (create + start in one call) ──
 
-  static camera(effect = 'greyscale') { return ShaderFX.cameraShader(effect).start(); }
+  // camOrEffect: CameraStream or effect string
+  static camera(camOrEffect = 'greyscale', effect = 'greyscale') { return ShaderFX.cameraShader(camOrEffect, effect).start(); }
   static video(src, effect = 'greyscale') { return ShaderFX.videoShader(src, effect).start(); }
   static preset(name = 'plasma') { return ShaderFX.presetShader(name).start(); }
   static window(name = 'editor', effect = 'greyscale') { return ShaderFX.windowShader(name, effect).start(); }
+  static micViz(effect = 'greyscale') { return ShaderFX.micVizShader(effect).start(); }
 }

@@ -7,6 +7,85 @@
 
 import * as Tone from 'tone';
 
+// ── File browser helpers ──────────────────────────────────────────────────────
+
+function _fileIcon(ext) {
+  if (['jpg','jpeg','png','gif','webp','svg','bmp','ico'].includes(ext)) return '🖼';
+  if (['mp4','webm','mov','avi','mkv'].includes(ext)) return '🎬';
+  if (['mp3','wav','ogg','flac','aac','m4a'].includes(ext)) return '🎵';
+  if (['js','ts','jsx','tsx','mjs'].includes(ext)) return '📜';
+  if (['wgsl','glsl'].includes(ext)) return '✨';
+  if (['json'].includes(ext)) return '{ }';
+  return '📄';
+}
+
+function _makeFileEntry(entry, depth, onSelect) {
+  const li = document.createElement('div');
+  li.style.cssText = 'font-family:monospace;font-size:11px;white-space:nowrap;user-select:none;';
+
+  const row = document.createElement('div');
+  row.style.cssText = `display:flex;align-items:center;gap:5px;padding:3px 8px 3px ${8 + depth * 14}px;cursor:pointer;`;
+
+  if (entry.kind === 'directory') {
+    const arrow = document.createElement('span');
+    arrow.textContent = '▶';
+    arrow.style.cssText = 'font-size:7px;color:#888;display:inline-block;width:8px;transition:transform 0.15s;flex-shrink:0;';
+    const icon = document.createElement('span');
+    icon.textContent = '📁';
+    const name = document.createElement('span');
+    name.textContent = entry.name;
+    name.style.color = '#333';
+    row.appendChild(arrow); row.appendChild(icon); row.appendChild(name);
+    li.appendChild(row);
+
+    let expanded = false;
+    let childContainer = null;
+    row.addEventListener('click', async () => {
+      expanded = !expanded;
+      arrow.style.transform = expanded ? 'rotate(90deg)' : '';
+      if (expanded && !childContainer) {
+        childContainer = document.createElement('div');
+        li.appendChild(childContainer);
+        await _renderDirContents(childContainer, entry, depth + 1, onSelect);
+      }
+      if (childContainer) childContainer.style.display = expanded ? '' : 'none';
+    });
+  } else {
+    const spacer = document.createElement('span');
+    spacer.style.cssText = 'width:8px;display:inline-block;flex-shrink:0;';
+    const icon = document.createElement('span');
+    icon.textContent = _fileIcon(entry.name.split('.').pop().toLowerCase());
+    const name = document.createElement('span');
+    name.textContent = entry.name;
+    name.style.color = '#222';
+    row.appendChild(spacer); row.appendChild(icon); row.appendChild(name);
+    li.appendChild(row);
+
+    row.addEventListener('click', async () => {
+      const file = await entry.getFile();
+      const url = URL.createObjectURL(file);
+      onSelect?.(url, entry.name, entry);
+    });
+  }
+
+  row.addEventListener('mouseenter', () => { row.style.background = '#e8f0fe'; });
+  row.addEventListener('mouseleave', () => { row.style.background = ''; });
+  return li;
+}
+
+async function _renderDirContents(container, dirHandle, depth, onSelect) {
+  const entries = [];
+  for await (const entry of dirHandle.values()) entries.push(entry);
+  entries.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    container.appendChild(_makeFileEntry(entry, depth, onSelect));
+  }
+}
+
 const LAYOUTS = {
   split: {
     'win-toolkit': { x: 0,    y: 0, w: 0.13, h: 1,    show: true },
@@ -23,6 +102,7 @@ export function initWM(onContentResize) {
   const savedGeometry = new Map();
   const spawnedIds = new Set();
   const fileHandles = new Map();
+  const _builtinFactories = new Map();
   let spawnCounter = 0;
 
   // Per-window Tone.Channel nodes — created lazily on first use
@@ -119,7 +199,12 @@ export function initWM(onContentResize) {
     const dh = desktop.offsetHeight;
 
     for (const [id, cfg] of Object.entries(layout)) {
-      const win = document.getElementById(id);
+      let win = document.getElementById(id);
+      if (!win) {
+        const factory = _builtinFactories.get(id);
+        if (factory) factory();
+        win = document.getElementById(id);
+      }
       if (!win) continue;
       if (!cfg.show) { win.style.display = 'none'; continue; }
       win.style.display = 'flex';
@@ -203,12 +288,29 @@ export function initWM(onContentResize) {
     if (win) bringToFront(win);
   }, true);
 
+  // Duplicate button
+  desktop.addEventListener('click', e => {
+    if (!e.target.closest('.wm-dup')) return;
+    const win = e.target.closest('.wm-win');
+    if (!win?._wmSpawnOpts) return;
+    const { title: t, ...savedOpts } = win._wmSpawnOpts;
+    api.spawn(t, {
+      ...savedOpts,
+      id: undefined,
+      x: win.offsetLeft + 24,
+      y: win.offsetTop  + 24,
+      w: win.offsetWidth,
+      h: win.offsetHeight,
+    });
+  });
+
   // Close button
   desktop.addEventListener('click', e => {
     if (!e.target.classList.contains('wm-close')) return;
     const win = e.target.closest('.wm-win');
     if (spawnedIds.has(win.id)) {
       win._wmCleanup?.();
+      win._wmRescueContent?.();
       _disposeChannel(win.id);
       win.remove();
       spawnedIds.delete(win.id);
@@ -294,10 +396,7 @@ export function initWM(onContentResize) {
   // Re-tile on browser resize
   window.addEventListener('resize', () => applyLayout(currentLayout));
 
-  applyLayout('split');
-
-  // Add audio controls to all pre-existing windows
-  desktop.querySelectorAll('.wm-win').forEach(win => _addAudioControls(win, null));
+  // Pre-existing built-in windows have no audio output — no controls needed.
 
   // ── Public API (exposed as window.wm) ────────────────────────────────────
 
@@ -375,6 +474,9 @@ export function initWM(onContentResize) {
     /** Switch to a named layout */
     layout(name) { applyLayout(name); },
 
+    /** Return the current layout name */
+    getLayout() { return currentLayout; },
+
     /**
      * Spawn a new floating window.
      * @param {string} title  - Titlebar label
@@ -403,6 +505,7 @@ export function initWM(onContentResize) {
       win.innerHTML = `
         <div class="wm-titlebar">
           <span class="wm-title">${title}</span>
+          <span class="wm-btn wm-dup" title="Duplicate"><i class="fa-regular fa-copy"></i></span>
           <span class="wm-btn wm-max" title="Maximize"><i class="fa-regular fa-window-maximize"></i></span>
           <span class="wm-btn wm-close" title="Close">×</span>
         </div>
@@ -444,8 +547,9 @@ export function initWM(onContentResize) {
         }
         if (src) {
           const dst = document.createElement('canvas');
-          dst.style.cssText = 'width:100%;height:100%;display:block;object-fit:contain;';
+          dst.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;';
           body.style.overflow = 'hidden';
+          body.style.background = '#000';
           body.appendChild(dst);
           const ctx = dst.getContext('2d');
           let rafId;
@@ -463,9 +567,12 @@ export function initWM(onContentResize) {
       }
 
       if (_cleanup) win._wmCleanup = _cleanup;
+      win._wmSpawnOpts = { title, ...opts };
 
-      const videoEl = type === 'video' ? body.querySelector('video') : null;
-      _addAudioControls(win, videoEl);
+      if (type === 'video' || type === 'html') {
+        const videoEl = type === 'video' ? body.querySelector('video') : null;
+        _addAudioControls(win, videoEl);
+      }
 
       desktop.appendChild(win);
       spawnedIds.add(id);
@@ -496,7 +603,6 @@ export function initWM(onContentResize) {
         } catch (_) { /* handle stale — fall through to picker */ }
       }
       const pickerOpts = {
-        types: opts.types ?? [{ description: 'Media', accept: { 'image/*': [], 'video/*': [], 'audio/*': [] } }],
         multiple: false,
         ...opts,
       };
@@ -506,11 +612,60 @@ export function initWM(onContentResize) {
     },
 
     /**
+     * Open a directory picker and spawn a floating file browser window.
+     * @param {string} [key]           - cache key (reuses handle without re-prompting)
+     * @param {function} [onSelect]    - called with (blobUrl, filename, fileHandle) on file click
+     * @param {object} [spawnOpts]     - { w, h, x, y, id } forwarded to spawn()
+     * @returns {Promise<string>}  window id
+     */
+    async browse(key, onSelect, spawnOpts = {}) {
+      let dirHandle;
+      if (key && fileHandles.has(key)) {
+        const h = fileHandles.get(key);
+        if (h.kind === 'directory') {
+          try {
+            const perm = await h.queryPermission({ mode: 'read' });
+            if (perm === 'granted') dirHandle = h;
+          } catch (_) {}
+        }
+      }
+      if (!dirHandle) {
+        dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+        if (key) fileHandles.set(key, dirHandle);
+      }
+
+      const winId = api.spawn(dirHandle.name, {
+        type: 'html',
+        html: '',
+        w: spawnOpts.w ?? 260,
+        h: spawnOpts.h ?? 400,
+        x: spawnOpts.x,
+        y: spawnOpts.y,
+        id: spawnOpts.id,
+      });
+      const win = document.getElementById(winId);
+      const body = win.querySelector('.wm-body');
+      body.innerHTML = '';
+      body.style.overflow = 'auto';
+      body.style.flexDirection = 'column';
+      body.style.padding = '2px 0';
+
+      _renderDirContents(body, dirHandle, 0, onSelect);
+      return winId;
+    },
+
+    /**
      * Get (or create) the Tone.Channel for a window.
      * Route audio to it: synth.connect(wm.channel('win-editor'))
      * The window's mute/volume controls will then affect that audio.
      */
     channel(id) { return _getChannel(id); },
+
+    /** Register a factory fn that (re)creates a built-in window by id */
+    registerBuiltin(id, factory) { _builtinFactories.set(id, factory); },
+
+    /** Create (or recreate) a built-in window by id */
+    createBuiltin(id) { _builtinFactories.get(id)?.(); },
 
     LAYOUTS,
     applyLayout,

@@ -8,6 +8,7 @@ export function initMic() {
   const toggle = document.getElementById("micToggle");
   const vizWrap = document.getElementById("mic-viz-wrap");
   const vizCanvas = document.getElementById("mic-viz");
+  window.__ar_mic_viz = vizCanvas;
   const ctx = vizCanvas.getContext("2d");
 
   const NUM_BARS = 48;
@@ -41,7 +42,6 @@ export function initMic() {
     }
   };
 
-  const micWin = document.getElementById("win-mic");
   let micWinPositioned = false;
 
   const startViz = () => {
@@ -52,6 +52,7 @@ export function initMic() {
       audioCtx.createMediaStreamSource(currentStream).connect(analyser);
     }
     if (audioCtx.state === "suspended") audioCtx.resume();
+    const micWin = document.getElementById("win-mic");
     if (micWin) {
       if (!micWinPositioned) {
         const desk = document.getElementById("desktop");
@@ -71,6 +72,7 @@ export function initMic() {
   const stopViz = () => {
     cancelAnimationFrame(rafId);
     rafId = null;
+    const micWin = document.getElementById("win-mic");
     if (micWin) micWin.style.display = "none";
     ctx.clearRect(0, 0, vizCanvas.width, vizCanvas.height);
   };

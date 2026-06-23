@@ -7,10 +7,11 @@ import { freezeTimers, restoreTimers } from "./timer-manager.js";
 import { initInlineWidgets } from "../editor/inline-widgets.js";
 import { audio, startAudio, cleanupAudio } from "../api/audio.js";
 import { Shader, ShaderFX, cleanupShaders } from "../api/shader.js";
+import { AudioViz, cleanupViz } from "../api/viz.js";
 import { Media, cleanupMedia } from "../api/media.js";
 import { getLayerForZ } from "../api/layer.js";
 import { getDraw, cleanupDraw } from "../api/draw.js";
-import { initBlockly, initPaletteWorkspace, onPaletteClick, getWorkspaceCode, resizeBlockly, workspaceIsEmpty, loadWorkspaceJSON, TOOLBOX_CATEGORY_META, hideInternalToolbox } from "../blocks/blocks.js";
+import { initBlockly, initPaletteWorkspace, onPaletteClick, getWorkspaceCode, resizeBlockly, workspaceIsEmpty, loadWorkspaceJSON, TOOLBOX_CATEGORY_META, hideInternalToolbox, finishBlockRenders, registerSidebarDeleteZone } from "../blocks/blocks.js";
 import { jsToBlocks } from "../blocks/js-to-blocks.js";
 import { initWM } from "../api/wm.js";
 import { initDOMCaptures, captureWindow as _captureWindow, cleanupCaptures } from "../editor/editor-capture.js";
@@ -27,6 +28,7 @@ window.audio = audio;
 window.Shader = Shader;
 window.ShaderFX = ShaderFX;
 window.Camera = Camera;
+window.AudioViz = AudioViz;
 window.Media = Media;
 window.pat = (str, inst, opts) => audio.pat(str, inst, opts);
 window.stack = (...pats) => audio.stack(...pats);
@@ -196,8 +198,6 @@ window.onload = () => {
 
   // ── Console + Output window show/hide ────────────────────────────────────
   const consoleEl = document.getElementById("console");
-  const consoleWin = document.getElementById("win-console");
-  const outputWin  = document.getElementById("win-canvas");
 
   // ── DOM captures (live canvas feeds for shader video: input) ─────────────
   initDOMCaptures(_nativeSetInterval, _nativeClearInterval);
@@ -206,15 +206,16 @@ window.onload = () => {
   const _log = console.log.bind(console);
   const _error = console.error.bind(console);
   const _clear = console.clear.bind(console);
-  const editorWin  = document.getElementById("win-editor");
 
   const showOutputWin = () => {
+    const outputWin = document.getElementById("win-canvas");
+    const editorWin = document.getElementById("win-editor");
     if (!outputWin || outputWin.style.display === "flex") return;
     const desk = document.getElementById("desktop");
     const dw = desk.offsetWidth, dh = desk.offsetHeight;
-    const editorLeft = editorWin.offsetLeft;
+    const editorLeft = editorWin?.offsetLeft ?? 0;
     const editorNewW = Math.round((dw - editorLeft) * 0.45);
-    editorWin.style.width  = `${editorNewW}px`;
+    if (editorWin) editorWin.style.width = `${editorNewW}px`;
     outputWin.style.left   = `${editorLeft + editorNewW}px`;
     outputWin.style.top    = "0px";
     outputWin.style.width  = `${dw - editorLeft - editorNewW}px`;
@@ -223,18 +224,19 @@ window.onload = () => {
   };
 
   const showConsoleWin = () => {
+    const consoleWin = document.getElementById("win-console");
+    const outputWin  = document.getElementById("win-canvas");
+    const editorWin  = document.getElementById("win-editor");
     if (!consoleWin || consoleWin.style.display === "flex") return;
     const desk = document.getElementById("desktop");
     const dw = desk.offsetWidth, dh = desk.offsetHeight;
     const consoleH = Math.round(dh * 0.30);
     const outputVisible = outputWin && outputWin.style.display === "flex";
     if (outputVisible) {
-      // shrink output, put console below it
       outputWin.style.height = `${Math.round(dh * 0.68)}px`;
       consoleWin.style.left  = outputWin.style.left;
       consoleWin.style.width = outputWin.style.width;
     } else if (editorWin && editorWin.style.display !== "none") {
-      // shrink editor, put console below it
       const edLeft  = editorWin.offsetLeft;
       const edWidth = editorWin.offsetWidth;
       editorWin.style.height = `${dh - consoleH}px`;
@@ -250,6 +252,8 @@ window.onload = () => {
   };
 
   const hideConsoleWin = () => {
+    const consoleWin = document.getElementById("win-console");
+    const editorWin  = document.getElementById("win-editor");
     if (!consoleWin) return;
     consoleWin.style.display = "none";
     if (editorWin && editorWin.style.display !== "none") {
@@ -268,6 +272,7 @@ window.onload = () => {
 
   const consoleToggleBtn = document.getElementById("consoleToggleBtn");
   consoleToggleBtn?.addEventListener("click", () => {
+    const consoleWin = document.getElementById("win-console");
     const open = consoleWin?.style.display === "flex";
     if (open) hideConsoleWin(); else showConsoleWin();
     consoleToggleBtn.classList.toggle("active", !open);
@@ -275,7 +280,16 @@ window.onload = () => {
 
   const editorToggleBtn = document.getElementById("editorToggleBtn");
   editorToggleBtn?.addEventListener("click", () => {
-    const open = editorWin?.style.display !== "none";
+    let editorWin = document.getElementById("win-editor");
+    if (!editorWin) {
+      window.wm.layout(window.wm.getLayout());
+      editorWin = document.getElementById("win-editor");
+      if (!editorWin) return;
+      editorToggleBtn.classList.add("active");
+      editor.refresh();
+      return;
+    }
+    const open = editorWin.style.display !== "none";
     editorWin.style.display = open ? "none" : "flex";
     editorToggleBtn.classList.toggle("active", !open);
     if (!open) editor.refresh();
@@ -297,6 +311,12 @@ window.onload = () => {
   console.clear = () => { consoleEl.innerHTML = ""; hideConsoleWin(); _clear(); };
 
   // ── Run / Pause / Stop ────────────────────────────────────────────────────
+  const ICONS = {
+    play:  '<i class="fa-solid fa-play"></i>',
+    pause: '<i class="fa-solid fa-pause"></i>',
+    reset: '<i class="fa-solid fa-rotate-left"></i>',
+  };
+
   const executeBtn = document.getElementById("execute");
   const stopBtn = document.getElementById("stopBtn");
   const clearCanvasBtn = document.getElementById("clearCanvasBtn");
@@ -402,6 +422,7 @@ window.onload = () => {
     stopVision();
     cleanupAudio();
     cleanupShaders();
+    cleanupViz();
     cleanupMedia();
     for (let i = 1; i < 999999; i++) _nativeClearInterval(i);
     idleWatcher = null;
@@ -460,6 +481,7 @@ window.onload = () => {
     stopVision();
     cleanupAudio();
     cleanupShaders();
+    cleanupViz();
     cleanupMedia();
     cleanupDraw();
     cleanupCameras();
@@ -482,7 +504,7 @@ window.onload = () => {
     const blocksActive = blocksMode && blocklyWorkspace && !workspaceIsEmpty(blocklyWorkspace);
     const raw = blocksActive ? getWorkspaceCode(blocklyWorkspace) : editor.getValue();
 
-    if (/\bvision\b|__ar_video/.test(raw) && !window.__ar_camera_on) {
+    if (/\bvision\b|__ar_video|ShaderFX\.camera/.test(raw) && !window.__ar_camera_on) {
       consoleEl.innerHTML = '<span class="err">Cannot run: camera is off. Turn on your camera first (<i class="fa-solid fa-video"></i> button in toolbar).</span>';
       showConsoleWin();
       return;
@@ -530,7 +552,6 @@ window.onload = () => {
   };
 
   // ── Sidebar toggle button ─────────────────────────────────────────────────
-  const toolkitWin = document.getElementById("win-toolkit");
   const sidebarBtn = document.getElementById("sidebarBtn");
   let sidebarOpen = localStorage.getItem("vl-sidebar-open") !== "0";
 
@@ -556,7 +577,8 @@ window.onload = () => {
   const blockyListPanel = document.getElementById("blockly-block-list");
 
   const applySidebar = () => {
-    toolkitWin.style.display = sidebarOpen ? "flex" : "none";
+    const toolkitWin = document.getElementById("win-toolkit");
+    if (toolkitWin) toolkitWin.style.display = sidebarOpen ? "flex" : "none";
     document.getElementById("toolkit-body").style.display = blocksMode ? "none" : "block";
     blockyCatPanel.style.display  = blocksMode ? "block" : "none";
     blockyListPanel.style.display = "none";
@@ -596,7 +618,7 @@ window.onload = () => {
     positionThumb(true);
     if (!blocklyWorkspace) {
       blocklyWorkspace = initBlockly(document.getElementById("blockly-div"));
-      hideInternalToolbox(blocklyWorkspace);
+      registerSidebarDeleteZone(blocklyWorkspace, document.getElementById("win-toolkit"));
 
       // Palette workspace — read-only Blockly view inside win-toolkit
       paletteWorkspace = initPaletteWorkspace(document.getElementById("blockly-palette"));
@@ -613,21 +635,26 @@ window.onload = () => {
         btn.className = "blockly-cat-btn";
         btn.textContent = name;
         btn.style.background = `hsl(${hue}, 50%, 42%)`;
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", async () => {
           blockyCatPanel.style.display = "none";
           blockyListPanel.style.display = "flex";
           backBtn.textContent = "← " + name;
           paletteWorkspace.clear();
-          let y = 10;
+          const addedBlocks = [];
           for (const { type } of blocks) {
             const block = paletteWorkspace.newBlock(type);
             block.initSvg();
             block.render();
-            if (block.svgGroup_) block.svgGroup_.setAttribute('data-block-type', type);
+            addedBlocks.push(block);
+          }
+          await finishBlockRenders();
+          let y = 10;
+          for (const block of addedBlocks) {
             block.moveTo({ x: 10, y });
             y += block.getHeightWidth().height + 14;
           }
           resizeBlockly(paletteWorkspace);
+          requestAnimationFrame(() => paletteWorkspace.scroll(0, 0));
         });
         blockyCatPanel.appendChild(btn);
       }
@@ -643,6 +670,11 @@ window.onload = () => {
   };
 
   const closeBlocks = () => {
+    if (blocklyWorkspace) {
+      const code = workspaceIsEmpty(blocklyWorkspace) ? '' : getWorkspaceCode(blocklyWorkspace);
+      editor.setValue(code);
+      editor.setCursor(0);
+    }
     blocksMode = false;
     blocksArea.style.display = "none";
     editorWrap.style.display = "";
@@ -655,21 +687,10 @@ window.onload = () => {
   textModeBtn.addEventListener("click", () => { if (blocksMode) { closeBlocks(); localStorage.setItem("vl-blocks-open", "0"); } });
   blocksModeBtn.addEventListener("click", () => { if (!blocksMode) { openBlocks(); localStorage.setItem("vl-blocks-open", "1"); } });
 
-  if (localStorage.getItem("vl-blocks-open") === "1") {
-    openBlocks();
-  } else {
-    applySidebar();
-  }
-  requestAnimationFrame(() => positionThumb(blocksMode));
-
   new ResizeObserver(() => {
     if (blocklyWorkspace && blocksArea.style.display !== "none") resizeBlockly(blocklyWorkspace);
     if (paletteWorkspace && blockyListPanel.style.display === "flex") resizeBlockly(paletteWorkspace);
   }).observe(blocksArea);
-
-  new ResizeObserver(() => {
-    if (paletteWorkspace && blockyListPanel.style.display === "flex") resizeBlockly(paletteWorkspace);
-  }).observe(document.getElementById("win-toolkit"));
 
   // ── Button handlers ───────────────────────────────────────────────────────
   clearCanvasBtn.addEventListener("click", () => {
@@ -715,9 +736,120 @@ window.onload = () => {
     if (blocklyWorkspace && blocksArea.style.display !== "none") resizeBlockly(blocklyWorkspace);
   });
 
+  // ── Built-in windows (created via WM so they get dup/close/etc.) ─────────
+  const _stage = document.getElementById('wm-stage');
+
+  function _adoptContent(winId, contentId, bodyStyle = {}) {
+    const win = document.getElementById(winId);
+    const body = win.querySelector('.wm-body');
+    Object.assign(body.style, bodyStyle);
+    const content = document.getElementById(contentId);
+    body.appendChild(content);
+    win._wmRescueContent = () => _stage.appendChild(content);
+  }
+
+  window.wm.registerBuiltin('win-toolkit', () => {
+    window.wm.spawn('API Toolbox', { id: 'win-toolkit', type: 'html', html: '' });
+    _adoptContent('win-toolkit', 'toolkit-panel');
+    document.getElementById('win-toolkit').querySelector('.wm-dup')?.remove();
+  });
+
+  window.wm.registerBuiltin('win-editor', () => {
+    window.wm.spawn('Editor', { id: 'win-editor', type: 'html', html: '' });
+    _adoptContent('win-editor', 'editor-column');
+    document.getElementById('win-editor').querySelector('.wm-dup')?.remove();
+    new ResizeObserver(() => {
+      editor.refresh();
+      inlineWidgets.refresh();
+      if (blocklyWorkspace && blocksArea.style.display !== "none") resizeBlockly(blocklyWorkspace);
+    }).observe(document.getElementById('win-editor'));
+  });
+
+  window.wm.registerBuiltin('win-canvas', () => {
+    window.wm.spawn('Output', { id: 'win-canvas', type: 'html', html: '' });
+    _adoptContent('win-canvas', 'fsContainer', { flexDirection: 'column' });
+    document.getElementById('win-canvas')._wmSpawnOpts = { title: 'Output mirror', type: 'canvas', z: 0 };
+  });
+
+  window.wm.registerBuiltin('win-camera', () => {
+    window.wm.spawn('Camera', { id: 'win-camera', type: 'html', html: '' });
+    const win = document.getElementById('win-camera');
+    const body = win.querySelector('.wm-body');
+    body.style.background = '#000';
+    const cam = document.getElementById('camera');
+    body.appendChild(cam);
+    win._wmRescueContent = () => _stage.appendChild(cam);
+    win._wmSpawnOpts = { title: 'Camera mirror', type: 'camera' };
+    win.querySelector('.wm-audio-ctrl')?.remove();
+    win.style.display = 'none';
+  });
+
+  window.wm.registerBuiltin('win-mic', () => {
+    window.wm.spawn('Mic', { id: 'win-mic', type: 'html', html: '' });
+    _adoptContent('win-mic', 'mic-viz-wrap', { background: '#111' });
+    document.getElementById('win-mic').querySelector('.wm-dup')?.remove();
+    document.getElementById('win-mic').style.display = 'none';
+  });
+
+  window.wm.registerBuiltin('win-console', () => {
+    window.wm.spawn('Console', { id: 'win-console', type: 'html', html: '' });
+    _adoptContent('win-console', 'console-wrap');
+    document.getElementById('win-console').querySelector('.wm-dup')?.remove();
+    document.getElementById('win-console').style.display = 'none';
+  });
+
+  ['win-toolkit', 'win-editor', 'win-canvas', 'win-camera', 'win-mic', 'win-console']
+    .forEach(id => window.wm.createBuiltin(id));
+
   new ResizeObserver(() => {
-    editor.refresh();
-    inlineWidgets.refresh();
-    if (blocklyWorkspace && blocksArea.style.display !== "none") resizeBlockly(blocklyWorkspace);
-  }).observe(document.getElementById("win-editor"));
+    if (paletteWorkspace && blockyListPanel.style.display === "flex") resizeBlockly(paletteWorkspace);
+  }).observe(document.getElementById("win-toolkit"));
+
+  const filesBtn = document.getElementById('filesBtn');
+  let _filesBrowseWinId = null;
+  filesBtn?.addEventListener('click', async () => {
+    // If window still in DOM, just focus it
+    if (_filesBrowseWinId && document.getElementById(_filesBrowseWinId)) {
+      window.wm.focus(_filesBrowseWinId);
+      return;
+    }
+    const imageExts = new Set(['jpg','jpeg','png','gif','webp','svg','bmp','ico']);
+    const videoExts = new Set(['mp4','webm','mov','avi','mkv']);
+    const audioExts = new Set(['mp3','wav','ogg','flac','aac','m4a']);
+    try {
+      _filesBrowseWinId = await window.wm.browse('__nav_files__', (url, name) => {
+        const ext = name.split('.').pop().toLowerCase();
+        if (imageExts.has(ext)) {
+          window.wm.spawn(name, { type: 'image', src: url, w: 480, h: 360 });
+        } else if (videoExts.has(ext)) {
+          window.wm.spawn(name, { type: 'video', src: url, w: 640, h: 480, controls: true });
+        } else if (audioExts.has(ext)) {
+          const a = new Audio(url);
+          a.controls = true;
+          const id = window.wm.spawn(name, { type: 'html', html: '', w: 320, h: 60 });
+          const body = document.getElementById(id)?.querySelector('.wm-body');
+          if (body) { body.style.alignItems = 'center'; body.style.padding = '4px 8px'; body.appendChild(a); a.play(); }
+        } else {
+          _log('[files]', name, url);
+        }
+      });
+      // Deactivate button once window is closed via its X
+      const observer = new MutationObserver(() => {
+        if (!document.getElementById(_filesBrowseWinId)) {
+          _filesBrowseWinId = null;
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.getElementById('desktop'), { childList: true });
+    } catch (_) { /* user cancelled picker */ }
+  });
+
+  window.wm.layout('split');
+
+  if (localStorage.getItem("vl-blocks-open") === "1") {
+    openBlocks();
+  } else {
+    applySidebar();
+  }
+  requestAnimationFrame(() => positionThumb(blocksMode));
 };

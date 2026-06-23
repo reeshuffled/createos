@@ -207,6 +207,16 @@ export const TOOLKIT_CATEGORIES = [
         code: "const s = new Shader(`\n  let col = textureSample(video, videoSampler, uv);\n  return vec4f(col.rgb, 1.0);\n`, { video: captureWindow('.CodeMirror') });\ns.start();",
         hint: "Capture any DOM element as a live shader texture — pass a CSS selector or element. canvas/video elements pass through directly.",
       },
+      {
+        label: "mic viz shader",
+        code: "ShaderFX.micViz('invert');",
+        hint: "Apply a WebGPU shader effect to the mic visualizer. Enable mic in toolbar first. Effects: greyscale, invert, channel_swap, posterize, scanlines. Or use audio.micCanvas as video: source in a custom Shader.",
+      },
+      {
+        label: "mic canvas custom shader",
+        code: "const s = new Shader(`\n  let col = textureSample(video, videoSampler, uv);\n  let v = col.r;\n  return vec4f(v * 0.2, v, v * 0.8, 1.0);\n`, { video: audio.micCanvas });\ns.start();",
+        hint: "Use audio.micCanvas as a live texture input — samples the mic frequency bar visualization. Enable mic in toolbar first.",
+      },
     ],
   },
   {
@@ -516,6 +526,26 @@ audio.start();`,
         code: "const mic = await audio.mic();\nconst meter = audio.meter();\nmic.connect(meter);\n\nlet radius = 10;\nsetInterval(() => {\n  const db = meter.getValue();\n  const amp = isFinite(db) ? Math.pow(10, db / 20) : 0;\n  radius = radius * 0.85 + amp * 300 * 0.15; // smoothed\n  draw.alpha(0.15).bg('#000').alpha(1);\n  draw.circle(draw.width/2, draw.height/2, Math.max(4, radius), `hsl(${amp * 200}, 80%, 60%)`);\n}, 16);",
         hint: "Mic amplitude drives a pulsing circle — loud = big and saturated. Replace the drawing with anything: particles, shader uniforms, layer blur.",
       },
+      {
+        label: "synth visualizer (bars)",
+        code: "const synth = audio.fm();\nconst viz = audio.viz(synth).start();\n\nsynth.play('C3', '2n');\nsetInterval(() => synth.play('C3', '2n'), 2000);",
+        hint: "audio.viz(source) creates an AudioViz — draws frequency bars full-screen. source can be any Instrument or Tone node. Modes: bars, wave, ring.",
+      },
+      {
+        label: "visualizer modes",
+        code: "const synth = audio.synth();\nconst viz = audio.viz(synth, { mode: 'wave', bins: 256, z: 5, opacity: 0.85 }).start();\n// modes: 'bars' (FFT spectrum), 'wave' (waveform), 'ring' (circular waveform)\n// viz.mode('ring')  — switch mode live\n// viz.color(120)    — hue override (degrees)\n// viz.opacity(0.5)\n// viz.stop()\n\nsetInterval(() => synth.play('E4', '8n'), 500);",
+        hint: "AudioViz modes — bars=FFT spectrum, wave=waveform line, ring=circular waveform. Switch mode live with viz.mode('ring'). viz.canvas is a live canvas for shader use.",
+      },
+      {
+        label: "visualizer + shader (fn)",
+        code: "const synth = audio.pluck();\nconst viz = audio.viz(synth, { mode: 'bars' }).start();\n\n// Pass a JS function — auto-converts to WebGPU shader\n// v = frequency value 0-1, t = time\nviz.shader((v, t) => [v * Math.sin(t), v * 0.3, 1.0 - v, 1.0]);\n\nconst notes = ['C3','E3','G3','B3','C4','E4','G4'];\nsetInterval(() => synth.play(notes[Math.floor(Math.random()*notes.length)], '8n'), 300);",
+        hint: "viz.shader(fn) converts a JS arrow function to WGSL automatically. (v) = frequency 0-1, (v, t) also gets time. Must return [r, g, b, a]. Math.sin/cos/abs/min/max/floor/sqrt/pow work. Use float literals (1.0 not 1).",
+      },
+      {
+        label: "visualizer + shader (preset)",
+        code: "const synth = audio.fm();\nconst viz = audio.viz(synth, { mode: 'ring', bins: 128 }).start();\n\n// Named presets: thermal, cool, rainbow, mono, neon\nviz.shader('rainbow');\n\nsetInterval(() => synth.play('C3', '2n'), 2000);",
+        hint: "viz.shader('preset') — built-in palettes: thermal, cool, rainbow, mono, neon. AudioViz.presets lists all names.",
+      },
     ],
   },
   {
@@ -759,12 +789,17 @@ audio.start();`,
       {
         label: "camera shader",
         code: "ShaderFX.camera('greyscale');",
-        hint: "Quick camera effect — camera must be on. Effects: greyscale, invert, channel_swap, posterize, scanlines",
+        hint: "Toolbar camera shader. Effects: greyscale, invert, channel_swap, posterize, scanlines",
+      },
+      {
+        label: "camera shader (specific camera)",
+        code: "const cam = await Camera.open({ index: 0 });\nShaderFX.camera(cam, 'greyscale');",
+        hint: "Apply shader to a specific Camera.open() stream — pass the stream as first arg",
       },
       {
         label: "camera shader (composable)",
         code: "const s = ShaderFX.cameraShader('greyscale');\ns.start();\n// later: s.stop(); s.opacity(0.5);",
-        hint: "Camera shader you can control — stop, fade opacity, swap effects",
+        hint: "Camera shader you can control — stop, fade opacity, swap effects. Pass a CameraStream as first arg for multi-camera.",
       },
       {
         label: "microphone",
@@ -850,6 +885,11 @@ audio.start();`,
         label: "pickFile",
         code: "const url = await wm.pickFile('myFile');\n// url is a blob URL — reuse key to skip picker next time",
         hint: "Pick a file via browser picker — caches the handle by key, no re-prompt while permission active",
+      },
+      {
+        label: "browse dir",
+        code: "await wm.browse('myDir', (url, name) => {\n  wm.spawn(name, { type: 'image', src: url, w: 480, h: 360 });\n});",
+        hint: "Open a directory picker and spawn a file browser window — click any file to get its blob URL",
       },
       {
         label: "spawn camera",

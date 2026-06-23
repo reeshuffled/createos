@@ -1,4 +1,5 @@
 import * as Tone from "tone";
+import { AudioViz } from "./viz.js";
 
 const _tracked = [];
 
@@ -243,6 +244,10 @@ class AudioAPI {
 
   // ── Analysis ─────────────────────────────────────────────────────────────
   // Usage: const m = audio.meter(); synth.chain(m); — meter sits in the signal chain
+  get micCanvas() { return window.__ar_mic_viz ?? null; }
+
+  viz(source, opts = {}) { return new AudioViz(source, opts); }
+
   meter() {
     return track(new Tone.Meter());
   }

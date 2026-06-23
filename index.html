@@ -169,6 +169,7 @@
       }
       .wm-close:hover { background: #c62828; color: #fff; }
       .wm-max:hover { background: #1565c0; color: #fff; }
+      .wm-dup:hover { background: #2e7d32; color: #fff; }
       .wm-title[contenteditable="true"] {
         background: rgba(255,255,255,0.5);
         border-radius: 3px;
@@ -326,6 +327,7 @@
         flex: 1 1 auto; min-height: 0;
         display: flex; align-items: center; justify-content: center;
         background: #000;
+        position: relative;
       }
       #fsContainer:fullscreen { background: #000; }
       #fsContainer:fullscreen #canvasWrapper {
@@ -437,6 +439,7 @@ s.start();</div>
         <li data-layout="split" title="Split layout (Ctrl+1)" class="active"><i class="fa-solid fa-table-columns"></i></li>
         <li id="editorToggleBtn" title="Toggle code editor"><i class="fa-solid fa-file-code"></i></li>
         <li id="consoleToggleBtn" title="Toggle console"><i class="fa-solid fa-terminal"></i></li>
+        <li id="filesBtn" title="File Browser"><i class="fa-solid fa-folder-open"></i></li>
         <li id="sidebarBtn" title="API Toolbox"><i class="fa-solid fa-toolbox"></i></li>
         <li id="helpBtn" title="API Quick Reference" style="margin-left:auto;"><i class="fa-solid fa-circle-question"></i></li>
         <li id="execute" title="Run" class="btn-green"><i class="fa-solid fa-play"></i></li>
@@ -445,117 +448,41 @@ s.start();</div>
       </ul>
     </nav>
 
+    <!-- Staged content for built-in WM windows; adopted into window bodies on init -->
+    <div id="wm-stage" style="display:none">
+      <div id="toolkit-panel">
+        <div id="toolkit-body"></div>
+        <div id="blockly-categories"></div>
+        <div id="blockly-block-list">
+          <button class="blockly-back-btn" id="blockly-back-btn">← Back</button>
+          <div id="blockly-palette"></div>
+        </div>
+      </div>
+      <div id="editor-column">
+        <div id="editor-wrap">
+          <div id="editor"></div>
+        </div>
+        <div id="blockly-area">
+          <div id="blockly-div"></div>
+        </div>
+      </div>
+      <div id="fsContainer">
+        <div id="canvasWrapper">
+          <canvas id="canvas" height="900" width="1600"></canvas>
+        </div>
+      </div>
+      <canvas id="camera" height="900" width="1600"></canvas>
+      <div id="mic-viz-wrap" style="width:100%;height:100%;display:flex;align-items:center;">
+        <canvas id="mic-viz" height="64" style="width:100%;display:block;"></canvas>
+      </div>
+      <div id="console-wrap">
+        <p id="console-label">Console (<a href="javascript:clearConsole();">Clear</a>):</p>
+        <div id="console"></div>
+      </div>
+    </div>
+
     <!-- Desktop: all windows live here -->
-    <div id="desktop">
-
-      <!-- Toolkit window -->
-      <div class="wm-win" id="win-toolkit">
-        <div class="wm-titlebar">
-          <span class="wm-title">API Toolbox</span>
-          <span class="wm-btn wm-max" title="Maximize"><i class="fa-regular fa-window-maximize"></i></span>
-          <span class="wm-btn wm-close" title="Close">×</span>
-        </div>
-        <div class="wm-body">
-          <div id="toolkit-panel">
-            <div id="toolkit-body"></div>
-            <div id="blockly-categories"></div>
-            <div id="blockly-block-list">
-              <button class="blockly-back-btn" id="blockly-back-btn">← Back</button>
-              <div id="blockly-palette"></div>
-            </div>
-          </div>
-        </div>
-        <div class="wm-resize-sw"></div>
-        <div class="wm-resize"></div>
-      </div>
-
-      <!-- Editor window -->
-      <div class="wm-win" id="win-editor">
-        <div class="wm-titlebar">
-          <span class="wm-title">Editor</span>
-          <span class="wm-btn wm-max" title="Maximize"><i class="fa-regular fa-window-maximize"></i></span>
-          <span class="wm-btn wm-close" title="Close">×</span>
-        </div>
-        <div class="wm-body">
-          <div id="editor-column">
-            <div id="editor-wrap">
-              <div id="editor"></div>
-            </div>
-            <div id="blockly-area">
-              <div id="blockly-div"></div>
-            </div>
-          </div>
-        </div>
-        <div class="wm-resize-sw"></div>
-        <div class="wm-resize"></div>
-      </div>
-
-      <!-- Output window (hidden until code runs) -->
-      <div class="wm-win" id="win-canvas" style="display:none;">
-        <div class="wm-titlebar">
-          <span class="wm-title">Output</span>
-          <span class="wm-btn wm-max" title="Maximize"><i class="fa-regular fa-window-maximize"></i></span>
-          <span class="wm-btn wm-close" title="Close">×</span>
-        </div>
-        <div class="wm-body" style="flex-direction:column;">
-          <div id="fsContainer">
-            <div id="canvasWrapper">
-              <canvas id="canvas" height="900" width="1600"></canvas>
-            </div>
-          </div>
-        </div>
-        <div class="wm-resize-sw"></div>
-        <div class="wm-resize"></div>
-      </div>
-
-      <!-- Camera window (hidden until camera toggle activated) -->
-      <div class="wm-win" id="win-camera" style="display:none;">
-        <div class="wm-titlebar">
-          <span class="wm-title">Camera</span>
-          <span class="wm-btn wm-max" title="Maximize"><i class="fa-regular fa-window-maximize"></i></span>
-          <span class="wm-btn wm-close" title="Close">×</span>
-        </div>
-        <div class="wm-body" style="background:#000;">
-          <canvas id="camera" height="900" width="1600"></canvas>
-        </div>
-        <div class="wm-resize-sw"></div>
-        <div class="wm-resize"></div>
-      </div>
-
-      <!-- Mic visualizer window (hidden until mic toggle activated) -->
-      <div class="wm-win" id="win-mic" style="display:none;">
-        <div class="wm-titlebar">
-          <span class="wm-title">Mic</span>
-          <span class="wm-btn wm-max" title="Maximize"><i class="fa-regular fa-window-maximize"></i></span>
-          <span class="wm-btn wm-close" title="Close">×</span>
-        </div>
-        <div class="wm-body" style="background:#111;">
-          <div id="mic-viz-wrap" style="width:100%; height:100%; display:flex; align-items:center;">
-            <canvas id="mic-viz" height="64" style="width:100%; display:block;"></canvas>
-          </div>
-        </div>
-        <div class="wm-resize-sw"></div>
-        <div class="wm-resize"></div>
-      </div>
-
-      <!-- Console window (hidden until output is logged) -->
-      <div class="wm-win" id="win-console" style="display:none;">
-        <div class="wm-titlebar">
-          <span class="wm-title">Console</span>
-          <span class="wm-btn wm-max" title="Maximize"><i class="fa-regular fa-window-maximize"></i></span>
-          <span class="wm-btn wm-close" title="Close">×</span>
-        </div>
-        <div class="wm-body">
-          <div id="console-wrap">
-            <p id="console-label">Console (<a href="javascript:clearConsole();">Clear</a>):</p>
-            <div id="console"></div>
-          </div>
-        </div>
-        <div class="wm-resize-sw"></div>
-        <div class="wm-resize"></div>
-      </div>
-
-    </div><!-- #desktop -->
+    <div id="desktop"></div><!-- #desktop -->
 
     <!-- Help / Cheatsheet Modal -->
     <div id="help-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:10000; overflow-y:auto; padding:24px 16px;">

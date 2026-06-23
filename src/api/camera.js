@@ -118,7 +118,6 @@ export function initCamera() {
       .catch((err) => console.warn("Camera unavailable:", err.message));
   };
 
-  const cameraWin = document.getElementById("win-camera");
   let cameraWinPositioned = false;
 
   document.getElementById("cameraToggle").addEventListener("click", () => {
@@ -127,6 +126,7 @@ export function initCamera() {
     const toggle = document.getElementById("cameraToggle");
     toggle.innerHTML = cameraOn ? '<i class="fa-solid fa-video"></i>' : '<i class="fa-solid fa-video-slash"></i>';
     toggle.classList.toggle("active", cameraOn);
+    const cameraWin = document.getElementById("win-camera");
     if (cameraOn) {
       if (cameraWin) {
         if (!cameraWinPositioned) {

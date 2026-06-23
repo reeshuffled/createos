@@ -3,6 +3,16 @@ import { javascriptGenerator, Order } from 'blockly/javascript';
 import 'blockly/blocks';
 import { SHADER_PRESETS, CAMERA_PRESETS } from '../api/shader.js';
 
+// Blockly v13 bug: moving a block SVG to the drag layer fires pointercancel,
+// which triggers handleUp prematurely and aborts the drop. Filter it out.
+{
+  const _origHandleUp = Blockly.Gesture.prototype.handleUp;
+  Blockly.Gesture.prototype.handleUp = function(e) {
+    if (e.type === 'pointercancel' && this.isDragging()) return;
+    _origHandleUp.call(this, e);
+  };
+}
+
 // ── Block definitions ────────────────────────────────────────────────────────
 
 Blockly.defineBlocksWithJsonArray([
@@ -187,6 +197,60 @@ Blockly.defineBlocksWithJsonArray([
     tooltip: 'Connect instrument to an effect',
   },
 
+  // ── Audio Visualizer ───────────────────────────────────────────────────────
+  {
+    type: 'audio_viz',
+    message0: 'visualize %1 mode %2',
+    args0: [
+      { type: 'input_value', name: 'SOURCE' },
+      {
+        type: 'field_dropdown', name: 'MODE', options: [
+          ['bars', 'bars'],
+          ['wave', 'wave'],
+          ['ring', 'ring'],
+        ],
+      },
+    ],
+    output: null,
+    colour: 260,
+    tooltip: 'Create an audio visualizer — returns AudioViz. Connect to start/stop/opacity/shader.',
+  },
+  {
+    type: 'audio_viz_start',
+    message0: 'start visualizer %1',
+    args0: [{ type: 'input_value', name: 'VIZ' }],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 260,
+    tooltip: 'Start an AudioViz drawing to the canvas',
+  },
+  {
+    type: 'audio_viz_stop',
+    message0: 'stop visualizer %1',
+    args0: [{ type: 'input_value', name: 'VIZ' }],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 260,
+    tooltip: 'Stop an AudioViz',
+  },
+  {
+    type: 'audio_viz_shader',
+    message0: 'visualizer %1 shader %2',
+    args0: [
+      { type: 'input_value', name: 'VIZ' },
+      {
+        type: 'field_dropdown', name: 'PRESET', options: [
+          ['thermal', 'thermal'], ['cool', 'cool'], ['rainbow', 'rainbow'],
+          ['mono', 'mono'], ['neon', 'neon'],
+        ],
+      },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 260,
+    tooltip: 'Apply a named shader preset to an AudioViz — thermal, cool, rainbow, mono, neon',
+  },
+
   // ── Shader ─────────────────────────────────────────────────────────────────
   // Creator blocks (output = Shader) — plug into start / stop / opacity / set_uniform
   {
@@ -218,19 +282,22 @@ Blockly.defineBlocksWithJsonArray([
   },
   {
     type: 'shader_camera_effect',
-    message0: 'camera shader %1',
-    args0: [{
-      type: 'field_dropdown', name: 'EFFECT', options: [
-        ['greyscale', 'greyscale'],
-        ['invert', 'invert'],
-        ['channel swap', 'channel_swap'],
-        ['posterize', 'posterize'],
-        ['scanlines', 'scanlines'],
-      ],
-    }],
+    message0: 'camera %1 shader %2',
+    args0: [
+      { type: 'input_value', name: 'CAM' },
+      {
+        type: 'field_dropdown', name: 'EFFECT', options: [
+          ['greyscale', 'greyscale'],
+          ['invert', 'invert'],
+          ['channel swap', 'channel_swap'],
+          ['posterize', 'posterize'],
+          ['scanlines', 'scanlines'],
+        ],
+      },
+    ],
     output: null,
     colour: 330,
-    tooltip: 'Create a camera shader — connect to start/stop/opacity. Camera must be on.',
+    tooltip: 'Camera shader — leave cam empty for toolbar camera, or plug in a Camera.open() stream. Connect to start/stop/opacity.',
   },
   {
     type: 'shader_video_effect',
@@ -275,6 +342,22 @@ Blockly.defineBlocksWithJsonArray([
     output: null,
     colour: 330,
     tooltip: 'Capture an IDE window and apply a shader effect — connect to "start shader".',
+  },
+  {
+    type: 'shader_mic_viz',
+    message0: 'mic viz shader %1',
+    args0: [{
+      type: 'field_dropdown', name: 'EFFECT', options: [
+        ['greyscale', 'greyscale'],
+        ['invert', 'invert'],
+        ['channel swap', 'channel_swap'],
+        ['posterize', 'posterize'],
+        ['scanlines', 'scanlines'],
+      ],
+    }],
+    output: null,
+    colour: 330,
+    tooltip: 'Apply a shader effect to the mic visualizer canvas — connect to "start shader".',
   },
   // Action blocks (statements) — take a Shader input
   {
@@ -692,6 +775,25 @@ Blockly.defineBlocksWithJsonArray([
     colour: 200,
     tooltip: 'Pick a file via browser — cached by key, no re-prompt. Returns blob URL.',
   },
+  {
+    type: 'wm_browse',
+    message0: 'browse dir key %1 w %2 h %3',
+    args0: [
+      { type: 'field_input', name: 'KEY', text: 'myDir' },
+      { type: 'field_number', name: 'W', value: 260, min: 100 },
+      { type: 'field_number', name: 'H', value: 400, min: 100 },
+    ],
+    message1: 'on select url %1 filename %2 do %3',
+    args1: [
+      { type: 'field_variable', name: 'URL_VAR', variable: 'url' },
+      { type: 'field_variable', name: 'NAME_VAR', variable: 'filename' },
+      { type: 'input_statement', name: 'DO' },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 200,
+    tooltip: 'Open a directory file browser. Click a file to run the DO statements with url and filename set.',
+  },
 
   // ── Camera ─────────────────────────────────────────────────────────────────
   {
@@ -770,6 +872,25 @@ javascriptGenerator.forBlock['audio_connect'] = (b, g) => {
   return `(${from}).connect(${to});\n`;
 };
 
+// Audio visualizer
+javascriptGenerator.forBlock['audio_viz'] = (b, g) => {
+  const src = g.valueToCode(b, 'SOURCE', Order.NONE) || 'null';
+  const mode = b.getFieldValue('MODE');
+  return [`audio.viz(${src}, { mode: ${JSON.stringify(mode)} })`, Order.FUNCTION_CALL];
+};
+javascriptGenerator.forBlock['audio_viz_start'] = (b, g) => {
+  const v = g.valueToCode(b, 'VIZ', Order.NONE) || 'null';
+  return `(${v}).start();\n`;
+};
+javascriptGenerator.forBlock['audio_viz_stop'] = (b, g) => {
+  const v = g.valueToCode(b, 'VIZ', Order.NONE) || 'null';
+  return `(${v}).stop();\n`;
+};
+javascriptGenerator.forBlock['audio_viz_shader'] = (b, g) => {
+  const v = g.valueToCode(b, 'VIZ', Order.NONE) || 'null';
+  return `(${v}).shader(${JSON.stringify(b.getFieldValue('PRESET'))});\n`;
+};
+
 // Shader creators (value blocks)
 javascriptGenerator.forBlock['shader_preset'] = (b) =>
   [`ShaderFX.presetShader(${JSON.stringify(b.getFieldValue('PRESET'))})`, Order.FUNCTION_CALL];
@@ -831,14 +952,20 @@ javascriptGenerator.forBlock['draw_alpha'] = (b) =>
 javascriptGenerator.forBlock['draw_reset'] = () => `draw.reset();\n`;
 
 // Camera / video shader creators (value blocks)
-javascriptGenerator.forBlock['shader_camera_effect'] = (b) =>
-  [`ShaderFX.cameraShader(${JSON.stringify(b.getFieldValue('EFFECT'))})`, Order.FUNCTION_CALL];
+javascriptGenerator.forBlock['shader_camera_effect'] = (b, g) => {
+  const cam = g.valueToCode(b, 'CAM', Order.NONE);
+  const eff = JSON.stringify(b.getFieldValue('EFFECT'));
+  const code = cam ? `ShaderFX.cameraShader(${cam}, ${eff})` : `ShaderFX.cameraShader(${eff})`;
+  return [code, Order.FUNCTION_CALL];
+};
 javascriptGenerator.forBlock['shader_video_effect'] = (b, g) => {
   const vid = g.valueToCode(b, 'VIDEO', Order.NONE) || 'null';
   return [`ShaderFX.videoShader(${vid}, ${JSON.stringify(b.getFieldValue('EFFECT'))})`, Order.FUNCTION_CALL];
 };
 javascriptGenerator.forBlock['shader_window_effect'] = (b) =>
   [`ShaderFX.windowShader(${JSON.stringify(b.getFieldValue('WIN'))}, ${JSON.stringify(b.getFieldValue('EFFECT'))})`, Order.FUNCTION_CALL];
+javascriptGenerator.forBlock['shader_mic_viz'] = (b) =>
+  [`ShaderFX.micVizShader(${JSON.stringify(b.getFieldValue('EFFECT'))})`, Order.FUNCTION_CALL];
 javascriptGenerator.forBlock['shader_set_uniform'] = (b, g) => {
   const s = g.valueToCode(b, 'SHADER', Order.NONE) || 'null';
   const ch = b.getFieldValue('CHANNEL');
@@ -932,6 +1059,15 @@ javascriptGenerator.forBlock['wm_spawn_shader'] = (b, g) => {
 };
 javascriptGenerator.forBlock['wm_pick_file'] = (b) =>
   [`await wm.pickFile(${JSON.stringify(b.getFieldValue('KEY'))})`, Order.AWAIT];
+javascriptGenerator.forBlock['wm_browse'] = (b, g) => {
+  const key = JSON.stringify(b.getFieldValue('KEY'));
+  const w = b.getFieldValue('W');
+  const h = b.getFieldValue('H');
+  const urlVar = g.getVariableName(b.getFieldValue('URL_VAR'));
+  const nameVar = g.getVariableName(b.getFieldValue('NAME_VAR'));
+  const body = g.statementToCode(b, 'DO');
+  return `await wm.browse(${key}, (${urlVar}, ${nameVar}) => {\n${body}}, { w: ${w}, h: ${h} });\n`;
+};
 
 // Camera
 javascriptGenerator.forBlock['camera_open'] = (b) =>
@@ -1004,6 +1140,14 @@ export const TOOLBOX = {
         { kind: 'block', type: 'audio_delay' },
         { kind: 'block', type: 'audio_distort' },
         { kind: 'block', type: 'audio_connect' },
+        // Audio visualizer
+        {
+          kind: 'block', type: 'audio_viz_start',
+          inputs: { VIZ: { block: { type: 'audio_viz' } } },
+        },
+        { kind: 'block', type: 'audio_viz' },
+        { kind: 'block', type: 'audio_viz_stop' },
+        { kind: 'block', type: 'audio_viz_shader' },
       ],
     },
     {
@@ -1023,6 +1167,7 @@ export const TOOLBOX = {
         { kind: 'block', type: 'shader_preset' },
         { kind: 'block', type: 'shader_new' },
         { kind: 'block', type: 'shader_window_effect' },
+        { kind: 'block', type: 'shader_mic_viz' },
         // Action blocks
         { kind: 'block', type: 'shader_stop' },
         { kind: 'block', type: 'shader_opacity' },
@@ -1102,6 +1247,7 @@ export const TOOLBOX = {
           inputs: { SHADER: { block: { type: 'shader_preset' } } },
         },
         { kind: 'block', type: 'wm_pick_file' },
+        { kind: 'block', type: 'wm_browse' },
       ],
     },
   ],
@@ -1111,7 +1257,6 @@ export const TOOLBOX = {
 
 export function initBlockly(container) {
   const workspace = Blockly.inject(container, {
-    toolbox: TOOLBOX,
     scrollbars: true,
     trashcan: true,
     zoom: { controls: true, wheel: true, startScale: 1.0, maxScale: 3, minScale: 0.3 },
@@ -1141,6 +1286,58 @@ export function workspaceIsEmpty(workspace) {
   return workspace.getAllBlocks(false).length === 0;
 }
 
+export function registerSidebarDeleteZone(workspace, sidebarEl) {
+  let _overlay = null;
+
+  function _showOverlay() {
+    if (_overlay) return;
+    _overlay = document.createElement('div');
+    _overlay.style.cssText = 'position:absolute;inset:0;background:rgba(183,28,28,0.18);display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:9999;border-radius:inherit;font-size:28px;';
+    _overlay.textContent = '🗑';
+    sidebarEl.style.position = 'relative';
+    sidebarEl.appendChild(_overlay);
+  }
+
+  function _hideOverlay() {
+    _overlay?.remove();
+    _overlay = null;
+  }
+
+  const component = {
+    id: 'sidebar-delete-zone',
+
+    wouldDelete(dragElement) {
+      const deletable = dragElement?.isDeletable?.() ?? false;
+      const isTop = !dragElement?.getParent?.();
+      return deletable && isTop;
+    },
+
+    getClientRect() {
+      const r = sidebarEl.getBoundingClientRect();
+      return new Blockly.utils.Rect(r.top, r.bottom, r.left, r.right);
+    },
+
+    onDragEnter(dragElement) {
+      if (this.wouldDelete(dragElement)) _showOverlay();
+    },
+
+    onDragOver() {},
+
+    onDragExit() { _hideOverlay(); },
+
+    onDrop() { _hideOverlay(); },
+
+    shouldPreventMove() { return false; },
+  };
+
+  workspace.getComponentManager().addComponent({
+    component,
+    weight: 0,
+    capabilities: ['drag_target', 'delete_area'],
+  });
+  workspace.recordDragTargets();
+}
+
 export function loadWorkspaceJSON(workspace, json) {
   Blockly.serialization.workspaces.load(json, workspace);
 }
@@ -1164,12 +1361,16 @@ export const TOOLBOX_CATEGORY_META = TOOLBOX.contents.map(c => {
 
 export function onPaletteClick(paletteWorkspace, callback) {
   paletteWorkspace.getInjectionDiv().addEventListener('pointerdown', e => {
-    const g = e.target.closest('g[data-block-type]');
+    const g = e.target.closest('g.blocklyBlock');
     if (!g) return;
     e.stopPropagation();
     e.preventDefault();
-    callback(g.getAttribute('data-block-type'));
+    callback(g.classList[0]); // first class is block type name
   }, true);
+}
+
+export function finishBlockRenders() {
+  return Blockly.renderManagement.finishQueuedRenders();
 }
 
 export function hideInternalToolbox(workspace) {
