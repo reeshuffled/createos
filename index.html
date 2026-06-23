@@ -183,6 +183,7 @@
         overflow: hidden;
         position: relative;
         display: flex;
+        user-select: none;
       }
       .wm-resize-handle { position: absolute; z-index: 10; }
       .wm-resize-handle[data-resize="n"]  { top:0; left:10px; right:10px; height:5px; cursor:n-resize; }
@@ -369,6 +370,7 @@
         padding: 8px 10px; border: 1px solid gray;
         font-family: monospace; font-size: 13px;
         white-space: pre-wrap; word-break: break-all;
+        user-select: text;
       }
       #console .err { color: red; }
 
@@ -489,6 +491,7 @@
         box-sizing: border-box; padding: 8px 10px;
         border: none; font-family: monospace; font-size: 13px;
         white-space: pre-wrap; word-break: break-all;
+        user-select: text;
       }
       .ar-console-err { color: red; }
       .ar-console-warn { color: #e65100; }
@@ -525,6 +528,34 @@
         transition: background 0.2s;
       }
       .wm-min:hover { background: #f57c00 !important; color: #fff !important; }
+
+      /* Content-only windows: body is draggable */
+      .wm-draggable-body .wm-body { cursor: grab; }
+      .wm-draggable-body .wm-body:active { cursor: grabbing; }
+
+      /* Chrome-less mode (dblclick titlebar to toggle) */
+      .wm-no-chrome .wm-titlebar { display: none; }
+      .wm-no-chrome .wm-resize-handle { display: none; }
+      .wm-hover-strip {
+        display: none;
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 6px;
+        z-index: 20;
+        cursor: move;
+        transition: background 0.15s;
+      }
+      .wm-no-chrome .wm-hover-strip { display: block; }
+      .wm-no-chrome:hover .wm-hover-strip { background: rgba(255,255,255,0.3); }
+
+      /* Transparent window */
+      .wm-transparent {
+        background: transparent !important;
+        border-color: transparent !important;
+        box-shadow: none !important;
+      }
+      .wm-transparent .wm-body { background: transparent !important; }
+      .wm-ghost.wm-ghost-on { background: #1565c0 !important; color: #fff !important; }
     </style>
   </head>
 
@@ -552,16 +583,17 @@ s.start();</div>
         <li id="newToolkitBtn" title="New Toolkit"><i class="fa-solid fa-toolbox"></i><i class="fa-solid fa-plus" style="font-size:7px;vertical-align:super;margin-left:1px;"></i></li>
         <li id="filesBtn" title="File Browser"><i class="fa-solid fa-folder-open"></i><i class="fa-solid fa-plus" style="font-size:7px;vertical-align:super;margin-left:1px;"></i></li>
         <li id="newVizBtn" title="New Visualizer"><i class="fa-solid fa-wave-square"></i><i class="fa-solid fa-plus" style="font-size:7px;vertical-align:super;margin-left:1px;"></i></li>
+        <li id="newMicVizBtn" title="New Mic Visualizer"><i class="fa-solid fa-microphone"></i><i class="fa-solid fa-chart-simple" style="font-size:8px;margin-left:1px;"></i><i class="fa-solid fa-plus" style="font-size:7px;vertical-align:super;margin-left:1px;"></i></li>
+        <li id="newCamVizBtn" title="New Camera Window"><i class="fa-solid fa-video"></i><i class="fa-solid fa-window-restore" style="font-size:8px;margin-left:1px;"></i><i class="fa-solid fa-plus" style="font-size:7px;vertical-align:super;margin-left:1px;"></i></li>
         <li id="helpBtn" title="API Quick Reference" style="margin-left:auto;"><i class="fa-solid fa-circle-question"></i></li>
+        <li id="fullscreenBtn" title="Fullscreen (F11)"><i class="fa-solid fa-expand"></i></li>
       </ul>
     </nav>
 
     <!-- Staged content for built-in WM windows; adopted into window bodies on init -->
     <div id="wm-stage" style="display:none">
       <canvas id="camera" height="900" width="1600"></canvas>
-      <div id="mic-viz-wrap" style="width:100%;height:100%;display:flex;align-items:center;">
-        <canvas id="mic-viz" height="64" style="width:100%;display:block;"></canvas>
-      </div>
+      <canvas id="mic-viz" width="512" height="64" style="display:none;"></canvas>
     </div>
 
     <!-- Desktop: all windows live here -->

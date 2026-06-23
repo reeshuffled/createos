@@ -280,18 +280,7 @@ window.onload = () => {
     win.style.display = 'none';
   });
 
-  window.wm.registerBuiltin('win-mic', () => {
-    window.wm.spawn('Mic', { id: 'win-mic', type: 'html', html: '' });
-    const win = document.getElementById('win-mic');
-    const body = win.querySelector('.wm-body');
-    body.style.background = '#111';
-    body.appendChild(document.getElementById('mic-viz-wrap'));
-    win._wmRescueContent = () => _stage.appendChild(document.getElementById('mic-viz-wrap'));
-    win.querySelector('.wm-dup')?.remove();
-    win.style.display = 'none';
-  });
-
-  ['win-toolkit', 'win-camera', 'win-mic'].forEach(id => window.wm.createBuiltin(id));
+  ['win-toolkit', 'win-camera'].forEach(id => window.wm.createBuiltin(id));
 
   // ── Editor instances ───────────────────────────────────────────────────────
   window.__ar_instances = new Map();
@@ -317,6 +306,7 @@ window.onload = () => {
   // ── Initial layout ─────────────────────────────────────────────────────────
   // Use editor-1 in split layout
   window.wm.layout('split');
+  window.wm.restoreState();
 
   // ── "New Editor" button ────────────────────────────────────────────────────
   document.getElementById('newEditorBtn')?.addEventListener('click', () => {
@@ -364,6 +354,30 @@ window.onload = () => {
     });
   });
 
+  document.getElementById('newMicVizBtn')?.addEventListener('click', () => {
+    const desk = document.getElementById('desktop');
+    const dw = desk.offsetWidth, dh = desk.offsetHeight;
+    const offset = (_vizCount++ % 8) * 24;
+    window.wm.spawn('Mic Visualizer', {
+      type: 'viz', source: 'mic', style: 'bars',
+      w: 400, h: 180,
+      x: Math.round((dw - 400) / 2) + offset,
+      y: Math.round((dh - 180) / 2) + offset,
+    });
+  });
+
+  document.getElementById('newCamVizBtn')?.addEventListener('click', () => {
+    const desk = document.getElementById('desktop');
+    const dw = desk.offsetWidth, dh = desk.offsetHeight;
+    const offset = (_vizCount++ % 8) * 24;
+    window.wm.spawn('Camera', {
+      type: 'camera',
+      w: 320, h: 240,
+      x: Math.round((dw - 320) / 2) + offset,
+      y: Math.round((dh - 240) / 2) + offset,
+    });
+  });
+
   // ── Files button ──────────────────────────────────────────────────────────
   const filesBtn = document.getElementById('filesBtn');
   const imageExts = new Set(['jpg','jpeg','png','gif','webp','svg','bmp','ico']);
@@ -404,6 +418,21 @@ window.onload = () => {
   document.addEventListener("keydown", (e) => {
     if (e.key === "?" && !e.ctrlKey && !e.metaKey && !["INPUT","TEXTAREA"].includes(document.activeElement?.tagName) && !document.activeElement?.classList.contains("CodeMirror-code")) toggleHelp();
     if (e.key === "Escape" && helpOverlay?.style.display !== "none") { helpOverlay.style.display = "none"; helpBtn?.classList.remove("active"); }
+  });
+
+  // ── Fullscreen ───────────────────────────────────────────────────────────
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+  const _updateFsIcon = () => {
+    const fs = !!document.fullscreenElement;
+    fullscreenBtn?.querySelector('i')?.setAttribute('class', fs ? 'fa-solid fa-compress' : 'fa-solid fa-expand');
+    fullscreenBtn?.classList.toggle('active', fs);
+  };
+  fullscreenBtn?.addEventListener('click', () => {
+    document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+  });
+  document.addEventListener('fullscreenchange', _updateFsIcon);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'F11') { e.preventDefault(); document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); }
   });
 
   // ── Global error fallback ─────────────────────────────────────────────────

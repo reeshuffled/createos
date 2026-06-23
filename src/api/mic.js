@@ -4,10 +4,14 @@ export function initMic() {
   let audioCtx = null;
   let analyser = null;
   let rafId = null;
+  let micVizWinId = null;
 
   const toggle = document.getElementById("micToggle");
-  const vizWrap = document.getElementById("mic-viz-wrap");
+
+  // Hidden canvas kept for shader.micVizShader() / audio.micCanvas compatibility
   const vizCanvas = document.getElementById("mic-viz");
+  vizCanvas.width = 512;
+  vizCanvas.height = 64;
   window.__ar_mic_viz = vizCanvas;
   const ctx = vizCanvas.getContext("2d");
 
@@ -15,17 +19,13 @@ export function initMic() {
 
   const drawBars = () => {
     rafId = requestAnimationFrame(drawBars);
-    const W = vizCanvas.offsetWidth;
-    if (vizCanvas.width !== W) vizCanvas.width = W;
+    const W = vizCanvas.width;
     const H = vizCanvas.height;
-
     const bins = analyser.frequencyBinCount;
     const data = new Uint8Array(bins);
     analyser.getByteFrequencyData(data);
-
     ctx.fillStyle = "#111";
     ctx.fillRect(0, 0, W, H);
-
     const half = NUM_BARS / 2;
     const barW = W / NUM_BARS;
     for (let i = 0; i < half; i++) {
@@ -35,16 +35,12 @@ export function initMic() {
       const h = v * H;
       const hue = v * 60;
       ctx.fillStyle = `hsl(${hue}, 95%, ${35 + v * 30}%)`;
-      // right of center
       ctx.fillRect((half + i) * barW, (H - h) / 2, barW - 1, h);
-      // mirror left of center
       ctx.fillRect((half - 1 - i) * barW, (H - h) / 2, barW - 1, h);
     }
   };
 
-  let micWinPositioned = false;
-
-  const startViz = () => {
+  const startMic = () => {
     if (!audioCtx) {
       audioCtx = new AudioContext();
       analyser = audioCtx.createAnalyser();
@@ -53,28 +49,28 @@ export function initMic() {
       window.__ar_mic_analyser = analyser;
     }
     if (audioCtx.state === "suspended") audioCtx.resume();
-    const micWin = document.getElementById("win-mic");
-    if (micWin) {
-      if (!micWinPositioned) {
-        const desk = document.getElementById("desktop");
-        const dw = desk.offsetWidth, dh = desk.offsetHeight;
-        micWin.style.left   = `${Math.round(dw * 0.42)}px`;
-        micWin.style.top    = `${Math.round(dh * 0.82)}px`;
-        micWin.style.width  = `${Math.round(dw * 0.30)}px`;
-        micWin.style.height = `${Math.round(dh * 0.14)}px`;
-        micWinPositioned = true;
-      }
-      micWin.style.zIndex = "500";
-      micWin.style.display = "flex";
-    }
     if (!rafId) drawBars();
+
+    // Spawn viz window pointed at mic if not already open
+    const existingWin = micVizWinId && document.getElementById(micVizWinId);
+    if (!existingWin) {
+      const desk = document.getElementById("desktop");
+      const dw = desk.offsetWidth, dh = desk.offsetHeight;
+      const w = Math.round(dw * 0.30), h = Math.round(dh * 0.14);
+      micVizWinId = window.wm?.spawn('Mic', {
+        type: 'viz',
+        source: 'mic',
+        style: 'bars',
+        x: Math.round(dw * 0.42),
+        y: Math.round(dh * 0.82),
+        w, h,
+      }) ?? null;
+    }
   };
 
-  const stopViz = () => {
+  const stopMic = () => {
     cancelAnimationFrame(rafId);
     rafId = null;
-    const micWin = document.getElementById("win-mic");
-    if (micWin) micWin.style.display = "none";
     ctx.clearRect(0, 0, vizCanvas.width, vizCanvas.height);
   };
 
@@ -86,7 +82,7 @@ export function initMic() {
       : '<i class="fa-solid fa-microphone-slash"></i>';
     toggle.classList.toggle("active", micOn);
     currentStream?.getAudioTracks().forEach((t) => (t.enabled = micOn));
-    micOn ? startViz() : stopViz();
+    micOn ? startMic() : stopMic();
   });
 
   if (navigator.mediaDevices?.getUserMedia) {
