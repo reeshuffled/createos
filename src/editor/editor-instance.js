@@ -625,7 +625,9 @@ export class EditorInstance {
       this.blocklyWorkspace = initBlockly(this.blocksDiv);
       const toolkitWin = document.getElementById(this._toolkitWinId);
       if (toolkitWin) registerSidebarDeleteZone(this.blocklyWorkspace, toolkitWin);
-      this.blocklyWorkspace.getAudioManager().setMuted(muteBtn.classList.contains('muted'));
+      this.blocklyWorkspace.getAudioManager().setMuted(
+        this._blocksMuteCtrl?.querySelector('button')?.classList.contains('muted') ?? false
+      );
     }
 
     if (this._blocksMuteCtrl) this._blocksMuteCtrl.style.display = '';
@@ -634,7 +636,7 @@ export class EditorInstance {
       try {
         const json = jsToBlocks(this.cm.getValue());
         if (json) loadWorkspaceJSON(this.blocklyWorkspace, json);
-      } catch (_) {}
+      } catch (e) { console.error('[blocks] js→blocks conversion failed:', e); }
     }
     resizeBlockly(this.blocklyWorkspace);
   }

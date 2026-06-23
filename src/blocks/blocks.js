@@ -321,6 +321,82 @@ Blockly.defineBlocksWithJsonArray([
     tooltip: 'Create a custom shader — connect to "start shader"',
   },
   {
+    type: 'shader_wgsl',
+    message0: 'wgsl shader %1',
+    args0: [{ type: 'field_input', name: 'BODY', text: 'return vec4f(uv.x, uv.y, 0.5, 1.0);' }],
+    output: null,
+    colour: 330,
+    tooltip: 'Custom WGSL fragment body — connects to start/stop/opacity blocks.',
+  },
+  {
+    type: 'shader_js_fn',
+    message0: 'js shader %1',
+    args0: [{ type: 'field_input', name: 'BODY', text: '({ uv, time }) => {\n  return [uv.x, uv.y, 0.5, 1.0];\n}' }],
+    output: null,
+    colour: 330,
+    tooltip: 'JS arrow function shader — written as plain JS, compiled to WGSL at runtime.',
+  },
+  // Decomposed JS shader fn — shader body as nested statement blocks
+  {
+    type: 'shader_fn_body',
+    message0: 'shader fn %1',
+    args0: [{ type: 'input_statement', name: 'BODY' }],
+    output: null,
+    colour: 330,
+    tooltip: 'Shader function body — use math/variable/return blocks inside.',
+  },
+  {
+    type: 'shader_return_rgba',
+    message0: 'return  r %1  g %2  b %3  a %4',
+    args0: [
+      { type: 'input_value', name: 'R' },
+      { type: 'input_value', name: 'G' },
+      { type: 'input_value', name: 'B' },
+      { type: 'input_value', name: 'A' },
+    ],
+    previousStatement: null,
+    colour: 330,
+    tooltip: 'Return RGBA color from the shader.',
+  },
+  // Shader math — custom blocks that emit radians (Blockly's built-in trig converts degrees)
+  {
+    type: 'shader_math_trig',
+    message0: '%1 %2',
+    args0: [
+      { type: 'field_dropdown', name: 'OP', options: [
+        ['sin', 'sin'], ['cos', 'cos'], ['tan', 'tan'],
+        ['asin', 'asin'], ['acos', 'acos'], ['atan', 'atan'],
+      ]},
+      { type: 'input_value', name: 'ARG' },
+    ],
+    output: 'Number', colour: 230,
+    tooltip: 'Trig function in radians (not degrees).',
+  },
+  {
+    type: 'shader_math_fn',
+    message0: '%1 %2 %3',
+    args0: [
+      { type: 'field_dropdown', name: 'OP', options: [
+        ['abs', 'abs'], ['sqrt', 'sqrt'], ['floor', 'floor'], ['ceil', 'ceil'],
+        ['round', 'round'], ['sign', 'sign'], ['exp', 'exp'], ['log', 'log'],
+        ['min', 'min'], ['max', 'max'],
+      ]},
+      { type: 'input_value', name: 'ARG' },
+      { type: 'input_value', name: 'ARG2' },
+    ],
+    output: 'Number', colour: 230,
+    tooltip: 'Math function — ARG2 used by min/max.',
+  },
+  // Shader parameter value blocks
+  ...['uv_x:uv.x', 'uv_y:uv.y', 'time:time',
+      'mouse_x:mouse.x', 'mouse_y:mouse.y',
+      'res_x:res.x', 'res_y:res.y',
+      'custom_x:custom.x', 'custom_y:custom.y',
+      'custom_z:custom.z', 'custom_w:custom.w'].map(s => {
+    const [key, label] = s.split(':');
+    return { type: `shader_param_${key}`, message0: label, output: 'Number', colour: 300, tooltip: `Shader input: ${label}` };
+  }),
+  {
     type: 'shader_camera_effect',
     message0: 'camera %1 shader %2',
     args0: [
@@ -954,6 +1030,47 @@ javascriptGenerator.forBlock['shader_new'] = (b) => {
   const op = b.getFieldValue('OPACITY');
   return [`new Shader(\`  return vec4f(uv.x, uv.y, 0.5, 1.0);\`, { z: ${z}, opacity: ${op} })`, Order.NEW];
 };
+javascriptGenerator.forBlock['shader_wgsl'] = (b) => {
+  const body = b.getFieldValue('BODY');
+  return [`new Shader(\`${body}\`)`, Order.NEW];
+};
+javascriptGenerator.forBlock['shader_js_fn'] = (b) => {
+  const body = b.getFieldValue('BODY');
+  return [`new Shader(${body})`, Order.NEW];
+};
+javascriptGenerator.forBlock['shader_math_trig'] = (b, g) => {
+  const op = b.getFieldValue('OP');
+  const arg = g.valueToCode(b, 'ARG', Order.NONE) || '0';
+  return [`Math.${op}(${arg})`, Order.FUNCTION_CALL];
+};
+javascriptGenerator.forBlock['shader_math_fn'] = (b, g) => {
+  const op = b.getFieldValue('OP');
+  const arg = g.valueToCode(b, 'ARG', Order.NONE) || '0';
+  const arg2 = g.valueToCode(b, 'ARG2', Order.NONE);
+  const call = arg2 ? `Math.${op}(${arg}, ${arg2})` : `Math.${op}(${arg})`;
+  return [call, Order.FUNCTION_CALL];
+};
+javascriptGenerator.forBlock['shader_fn_body'] = (b, g) => {
+  const body = g.statementToCode(b, 'BODY');
+  return [`new Shader(({ uv, time, mouse, res, custom }) => {\n${body}})`, Order.NEW];
+};
+javascriptGenerator.forBlock['shader_return_rgba'] = (b, g) => {
+  const r = g.valueToCode(b, 'R', Order.NONE) || '0';
+  const gr = g.valueToCode(b, 'G', Order.NONE) || '0';
+  const bl = g.valueToCode(b, 'B', Order.NONE) || '0';
+  const a = g.valueToCode(b, 'A', Order.NONE) || '1';
+  return `return [${r}, ${gr}, ${bl}, ${a}];\n`;
+};
+for (const [type, code] of [
+  ['shader_param_uv_x', 'uv.x'], ['shader_param_uv_y', 'uv.y'],
+  ['shader_param_time', 'time'],
+  ['shader_param_mouse_x', 'mouse.x'], ['shader_param_mouse_y', 'mouse.y'],
+  ['shader_param_res_x', 'res.x'], ['shader_param_res_y', 'res.y'],
+  ['shader_param_custom_x', 'custom.x'], ['shader_param_custom_y', 'custom.y'],
+  ['shader_param_custom_z', 'custom.z'], ['shader_param_custom_w', 'custom.w'],
+]) {
+  javascriptGenerator.forBlock[type] = () => [code, Order.MEMBER];
+}
 javascriptGenerator.forBlock['shader_start'] = (b, g) => {
   const s = g.valueToCode(b, 'SHADER', Order.NONE) || 'null';
   return `(${s}).start();\n`;
@@ -1227,12 +1344,30 @@ export const TOOLBOX = {
         // Creators (value blocks — can also feed stop/opacity/set_uniform)
         { kind: 'block', type: 'shader_preset' },
         { kind: 'block', type: 'shader_new' },
+        { kind: 'block', type: 'shader_wgsl' },
+        { kind: 'block', type: 'shader_js_fn' },
+        { kind: 'block', type: 'shader_fn_body' },
         { kind: 'block', type: 'shader_window_effect' },
         { kind: 'block', type: 'shader_mic_viz' },
         // Action blocks
         { kind: 'block', type: 'shader_stop' },
         { kind: 'block', type: 'shader_opacity' },
         { kind: 'block', type: 'shader_set_uniform' },
+        // Fn-body building blocks
+        { kind: 'block', type: 'shader_return_rgba' },
+        { kind: 'block', type: 'shader_math_trig' },
+        { kind: 'block', type: 'shader_math_fn' },
+        { kind: 'block', type: 'shader_param_uv_x' },
+        { kind: 'block', type: 'shader_param_uv_y' },
+        { kind: 'block', type: 'shader_param_time' },
+        { kind: 'block', type: 'shader_param_mouse_x' },
+        { kind: 'block', type: 'shader_param_mouse_y' },
+        { kind: 'block', type: 'shader_param_res_x' },
+        { kind: 'block', type: 'shader_param_res_y' },
+        { kind: 'block', type: 'shader_param_custom_x' },
+        { kind: 'block', type: 'shader_param_custom_y' },
+        { kind: 'block', type: 'shader_param_custom_z' },
+        { kind: 'block', type: 'shader_param_custom_w' },
       ],
     },
     {

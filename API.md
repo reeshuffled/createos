@@ -68,6 +68,16 @@ Video input: pass `{ video: source }` in opts. Two WGSL bindings auto-declared: 
 
 If fragment body starts with `@fragment` or `@vertex` → treated as full WGSL.
 
+**JS arrow function** — compiled to WGSL at runtime via `jsToWGSL`. Destructure from `{ uv, time, mouse, res, custom }`, return `[r, g, b, a]` array:
+```js
+const s = new Shader(({ uv, time }) => {
+  const r = Math.sin(uv.x * 10 + time) * 0.5 + 0.5;
+  const g = Math.cos(uv.y * 8  - time) * 0.5 + 0.5;
+  return [r, g, 0.5, 1.0];
+});
+```
+The JS form round-trips cleanly to/from Blocks — each expression decomposes into connectable Scratch-style blocks.
+
 ---
 
 ## Audio — `audio`

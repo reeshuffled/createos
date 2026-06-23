@@ -4,6 +4,8 @@
 
 import esprima from 'esprima';
 import { SHADER_PRESETS, CAMERA_PRESETS } from '../api/shader.js';
+// Original source text for range-based extraction during jsToBlocks calls
+let _src = '';
 
 function normalizeWGSL(s) { return s.trim().replace(/\s+/g, ' '); }
 
@@ -76,23 +78,157 @@ function makeStartShader(creatorBlock) {
 // ── Shader new-expression → block ────────────────────────────────────────────
 
 function matchShaderNew(newExpr) {
-  const body = strLit(newExpr.arguments[0]);
-  if (!body) return null;
+  const arg0 = newExpr.arguments[0];
+  const body = strLit(arg0);
 
-  const opts = newExpr.arguments[1];
-  let videoNode = null;
-  if (opts?.type === 'ObjectExpression') {
-    for (const p of opts.properties)
-      if (p.key?.name === 'video') { videoNode = p.value; break; }
+  if (body) {
+    const opts = newExpr.arguments[1];
+    let videoNode = null;
+    if (opts?.type === 'ObjectExpression') {
+      for (const p of opts.properties)
+        if (p.key?.name === 'video') { videoNode = p.value; break; }
+    }
+    if (videoNode && isArVideo(videoNode)) {
+      const effect = matchCameraPreset(body) ?? 'greyscale';
+      return { type: 'shader_camera_effect', fields: { EFFECT: effect } };
+    }
+    const preset = matchExact(body, SHADER_PRESETS);
+    if (preset) return { type: 'shader_preset', fields: { PRESET: preset } };
+    return { type: 'shader_wgsl', fields: { BODY: body } };
   }
 
-  if (videoNode && isArVideo(videoNode)) {
-    const effect = matchCameraPreset(body) ?? 'greyscale';
-    return { type: 'shader_camera_effect', fields: { EFFECT: effect } };
+  // Arrow/function expression arg — try full decomposition, fall back to text blob
+  if (arg0 && (arg0.type === 'ArrowFunctionExpression' || arg0.type === 'FunctionExpression')) {
+    const stmts = arg0.body?.type === 'BlockStatement' ? arg0.body.body : null;
+    if (stmts) {
+      const decomposed = shaderFnBodyBlock(stmts);
+      if (decomposed) return decomposed;
+    }
+    // Fallback: store raw JS source text
+    if (_src && arg0.range) {
+      return { type: 'shader_js_fn', fields: { BODY: _src.slice(arg0.range[0], arg0.range[1]) } };
+    }
   }
 
-  const preset = matchExact(body, SHADER_PRESETS);
-  return preset ? { type: 'shader_preset', fields: { PRESET: preset } } : null;
+  return null;
+}
+
+// ── Shader fn body decomposition ─────────────────────────────────────────────
+// Strategy: inline const declarations into the return block so we don't need
+// Blockly's workspace-scoped variable system (which would break the fn body scope).
+
+const SHADER_PARAMS = {
+  'uv.x': 'shader_param_uv_x', 'uv.y': 'shader_param_uv_y',
+  'mouse.x': 'shader_param_mouse_x', 'mouse.y': 'shader_param_mouse_y',
+  'res.x': 'shader_param_res_x', 'res.y': 'shader_param_res_y',
+  'custom.x': 'shader_param_custom_x', 'custom.y': 'shader_param_custom_y',
+  'custom.z': 'shader_param_custom_z', 'custom.w': 'shader_param_custom_w',
+};
+// Custom trig/math ops use shader_math_trig / shader_math_fn (not Blockly's built-ins,
+// which add degree↔radian conversion we don't want).
+const TRIG_FNS = new Set(['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2']);
+const MATH_FNS = new Set(['abs', 'sqrt', 'floor', 'ceil', 'round', 'log', 'log2', 'exp', 'sign']);
+const ARITH_OPS = { '+': 'ADD', '-': 'MINUS', '*': 'MULTIPLY', '/': 'DIVIDE', '**': 'POWER' };
+
+function exprToBlock(node, locals) {
+  if (!node) return null;
+
+  if (node.type === 'Literal' && typeof node.value === 'number')
+    return { type: 'math_number', fields: { NUM: node.value } };
+
+  if (node.type === 'Identifier') {
+    if (node.name === 'time') return { type: 'shader_param_time' };
+    // Inline local const if available
+    if (locals?.has(node.name)) return exprToBlock(locals.get(node.name), locals);
+    return null; // unknown identifier — can't translate
+  }
+
+  if (node.type === 'MemberExpression' && !node.computed) {
+    const key = `${node.object?.name}.${node.property?.name}`;
+    if (SHADER_PARAMS[key]) return { type: SHADER_PARAMS[key] };
+  }
+
+  if (node.type === 'UnaryExpression' && node.operator === '-') {
+    const arg = exprToBlock(node.argument, locals);
+    if (!arg) return null;
+    return { type: 'math_arithmetic', fields: { OP: 'MINUS' }, inputs: {
+      A: { block: { type: 'math_number', fields: { NUM: 0 } } },
+      B: { block: arg },
+    }};
+  }
+
+  if (node.type === 'BinaryExpression') {
+    const op = ARITH_OPS[node.operator];
+    if (!op) return null;
+    const left = exprToBlock(node.left, locals);
+    const right = exprToBlock(node.right, locals);
+    if (!left || !right) return null;
+    return { type: 'math_arithmetic', fields: { OP: op }, inputs: { A: { block: left }, B: { block: right } } };
+  }
+
+  if (node.type === 'CallExpression') {
+    const callee = node.callee;
+    if (callee.type === 'MemberExpression' && callee.object?.name === 'Math') {
+      const fn = callee.property?.name;
+      const arg = node.arguments[0] ? exprToBlock(node.arguments[0], locals) : null;
+      if (TRIG_FNS.has(fn) && fn !== 'atan2') {
+        const b = { type: 'shader_math_trig', fields: { OP: fn }, inputs: {} };
+        if (arg) b.inputs.ARG = { block: arg };
+        return b;
+      }
+      if (MATH_FNS.has(fn)) {
+        const b = { type: 'shader_math_fn', fields: { OP: fn }, inputs: {} };
+        if (arg) b.inputs.ARG = { block: arg };
+        return b;
+      }
+      if (fn === 'min' || fn === 'max') {
+        const arg2 = node.arguments[1] ? exprToBlock(node.arguments[1], locals) : null;
+        const b = { type: 'shader_math_fn', fields: { OP: fn }, inputs: {} };
+        if (arg) b.inputs.ARG = { block: arg };
+        if (arg2) b.inputs.ARG2 = { block: arg2 };
+        return b;
+      }
+      if (fn === 'pow') {
+        const arg2 = node.arguments[1] ? exprToBlock(node.arguments[1], locals) : null;
+        return { type: 'math_arithmetic', fields: { OP: 'POWER' }, inputs: {
+          A: arg ? { block: arg } : {},
+          B: arg2 ? { block: arg2 } : {},
+        }};
+      }
+    }
+  }
+
+  return null;
+}
+
+function shaderFnBodyBlock(stmts) {
+  // First pass: collect const/let declarations as inlineable locals
+  const locals = new Map();
+  const rest = [];
+  for (const s of stmts) {
+    if (s.type === 'VariableDeclaration') {
+      for (const d of s.declarations)
+        if (d.id?.name && d.init) locals.set(d.id.name, d.init);
+    } else {
+      rest.push(s);
+    }
+  }
+
+  // Must end with return [r, g, b, a]
+  if (rest.length !== 1 || rest[0].type !== 'ReturnStatement') return null;
+  const ret = rest[0].argument;
+  if (ret?.type !== 'ArrayExpression' || ret.elements.length !== 4) return null;
+
+  const [r, g, b, a] = ret.elements.map(n => exprToBlock(n, locals));
+  if (!r && !g && !b && !a) return null;
+
+  const retBlock = { type: 'shader_return_rgba', inputs: {} };
+  if (r) retBlock.inputs.R = { block: r };
+  if (g) retBlock.inputs.G = { block: g };
+  if (b) retBlock.inputs.B = { block: b };
+  if (a) retBlock.inputs.A = { block: a };
+
+  return { type: 'shader_fn_body', inputs: { BODY: { block: retBlock } } };
 }
 
 // ── Value block matcher ──────────────────────────────────────────────────────
@@ -330,14 +466,17 @@ function translateStatements(stmts) {
  * Unrecognized code is silently skipped.
  */
 export function jsToBlocks(code) {
+  _src = code;
   let ast;
   try {
-    ast = esprima.parseScript(code, { tolerant: true });
+    ast = esprima.parseScript(code, { tolerant: true, range: true });
   } catch {
+    _src = '';
     return null;
   }
 
   const root = translateStatements(ast.body);
+  _src = '';
   if (!root) return null;
 
   root.x = 20;
