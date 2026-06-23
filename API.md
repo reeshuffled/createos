@@ -80,6 +80,102 @@ The JS form round-trips cleanly to/from Blocks — each expression decomposes in
 
 ---
 
+## GLShader — `new GLShader(body, opts?)`
+
+WebGL/GLSL fragment shaders. Works in **all browsers** (Chrome, Firefox, Safari, mobile).
+Use when: porting ShaderToy code, targeting Firefox, or when an LLM generates GLSL.
+
+Same API shape as `Shader`:
+```js
+const s = new GLShader(`
+  // Pre-declared: uv (vec2 0-1), time, mouse, custom
+  // Set gl_FragColor to output
+  gl_FragColor = vec4(uv.x, uv.y, sin(uTime)*0.5+0.5, 1.0);
+`, { z: 30, opacity: 1.0, video: null });
+
+s.start()              // begin render loop
+s.stop()               // pause
+s.set([r, g, b, a])   // set all custom channels (uCustom)
+s.set(index, value)    // set one channel (0=x 1=y 2=z 3=w)
+s.video(source)        // set video/canvas source (uVideo sampler2D)
+s.bind(audioSignal)    // auto-fill uCustom = [rms, bass, mid, high]
+s.opacity(0–1)
+s.z(n)
+```
+
+**Source detection:**
+- Contains `void main()` or `#version` → used as-is (full GLSL program)
+- Contains `void mainImage(out vec4, in vec2)` → **ShaderToy mode** — auto-wrapped
+- Otherwise → fragment body, auto-wrapped with uniforms
+
+**ShaderToy paste-in** — works with zero changes:
+```js
+new GLShader(`
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+  vec2 uv = fragCoord / uResolution;
+  vec3 col = 0.5 + 0.5 * cos(uTime + uv.xyx + vec3(0,2,4));
+  fragColor = vec4(col, 1.0);
+}
+`).start();
+```
+
+**Presets:** `GLSL_PRESETS` — `{ gradient, plasma, waves, circles, noise }` fragment body strings.
+
+---
+
+## PIXI — `pixi`, `Stage`, `PIXI`
+
+PIXI.js v7 — WebGL scene graph. Use for: sprites, particles, text, per-object filters, hit-testing.
+Use `Shader`/`GLShader` for full-screen pixel effects. They layer: PIXI z=25, Shader z=30.
+
+```js
+// window.pixi  = PIXI.Application
+// window.Stage = pixi.stage (root container)
+// window.PIXI  = PIXI namespace
+
+// Sprite from URL
+const sprite = PIXI.Sprite.from('https://example.com/hero.png');
+sprite.anchor.set(0.5);
+sprite.x = pixi.screen.width / 2;
+sprite.y = pixi.screen.height / 2;
+Stage.addChild(sprite);
+
+// Animation loop — tracked, cleaned up on Stop
+pixi.tick(delta => {
+  sprite.rotation += 0.01;
+});
+
+// Graphics
+const g = new PIXI.Graphics();
+g.beginFill(0xff6600);
+g.drawCircle(0, 0, 60);
+g.endFill();
+g.x = 400; g.y = 225;
+Stage.addChild(g);
+
+// Text
+const t = new PIXI.Text('hello', new PIXI.TextStyle({ fontSize: 48, fill: '#fff' }));
+t.anchor.set(0.5);
+Stage.addChild(t);
+
+// Blur filter on any display object
+sprite.filters = [new PIXI.filters.BlurFilter()];
+
+// Container (group)
+const group = new PIXI.Container();
+group.addChild(sprite);
+Stage.addChild(group);
+```
+
+**Key notes:**
+- `pixi.tick(fn)` — preferred over `pixi.ticker.add(fn)`. Tracked for cleanup on Stop.
+- `pixi.screen.width/height` — current canvas dimensions (responsive).
+- `interactive = true` + `.on('pointerdown', fn)` — per-object click/hover.
+- PIXI canvas is transparent, sits at z=25. Draw API (z=0) visible behind it.
+- `Stage.removeChildren()` — clear scene. Auto-cleared on Stop.
+
+---
+
 ## Audio — `audio`
 
 Tone.js wrapper. `audio.start()` required to begin transport.

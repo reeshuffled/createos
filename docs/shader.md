@@ -1,6 +1,9 @@
 # Shader API
 
-WebGPU fragment shaders rendered as fullscreen canvas overlays. Requires Chrome 113+ or Safari 18+.
+WebGPU/WGSL fragment shaders. Requires Chrome 113+, Edge 113+, or Safari 18+.
+
+> **Firefox / older Safari?** Use [`GLShader`](./glsl-shader.md) — same API, WebGL/GLSL, works in all browsers. Also supports ShaderToy paste-in.
+
 
 ## Quick Start
 

@@ -911,6 +911,187 @@ Blockly.defineBlocksWithJsonArray([
     tooltip: 'Open a directory file browser. Click a file to run the DO statements with url and filename set.',
   },
 
+  // ── PIXI ───────────────────────────────────────────────────────────────────
+  {
+    type: 'pixi_graphics_circle',
+    message0: 'pixi circle x %1 y %2 r %3 color %4',
+    args0: [
+      { type: 'field_number', name: 'X', value: 400 },
+      { type: 'field_number', name: 'Y', value: 225 },
+      { type: 'field_number', name: 'R', value: 60 },
+      { type: 'field_input', name: 'COLOR', text: '0x4488ff' },
+    ],
+    output: null,
+    colour: 290,
+    tooltip: 'Create a PIXI Graphics circle — returns a Graphics object. Add to stage with "add to stage".',
+  },
+  {
+    type: 'pixi_graphics_rect',
+    message0: 'pixi rect x %1 y %2 w %3 h %4 color %5',
+    args0: [
+      { type: 'field_number', name: 'X', value: 300 },
+      { type: 'field_number', name: 'Y', value: 150 },
+      { type: 'field_number', name: 'W', value: 200 },
+      { type: 'field_number', name: 'H', value: 150 },
+      { type: 'field_input', name: 'COLOR', text: '0xff6600' },
+    ],
+    output: null,
+    colour: 290,
+    tooltip: 'Create a PIXI Graphics filled rectangle — returns Graphics object.',
+  },
+  {
+    type: 'pixi_text',
+    message0: 'pixi text %1 x %2 y %3 size %4 color %5',
+    args0: [
+      { type: 'field_input', name: 'STR', text: 'hello pixi' },
+      { type: 'field_number', name: 'X', value: 100 },
+      { type: 'field_number', name: 'Y', value: 100 },
+      { type: 'field_number', name: 'SIZE', value: 48, min: 1 },
+      { type: 'field_input', name: 'COLOR', text: '#ffffff' },
+    ],
+    output: null,
+    colour: 290,
+    tooltip: 'Create a PIXI Text object — returns Text. Add to stage with "add to stage".',
+  },
+  {
+    type: 'pixi_sprite',
+    message0: 'pixi sprite from %1',
+    args0: [{ type: 'field_input', name: 'URL', text: 'https://example.com/hero.png' }],
+    output: null,
+    colour: 290,
+    tooltip: 'Create a PIXI Sprite from a URL — returns Sprite. Add to stage.',
+  },
+  {
+    type: 'pixi_add_to_stage',
+    message0: 'add %1 to stage',
+    args0: [{ type: 'input_value', name: 'OBJ' }],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 290,
+    tooltip: 'Add a PIXI DisplayObject to the scene (Stage)',
+  },
+  {
+    type: 'pixi_set_pos',
+    message0: 'set %1 position x %2 y %3',
+    args0: [
+      { type: 'input_value', name: 'OBJ' },
+      { type: 'field_number', name: 'X', value: 400 },
+      { type: 'field_number', name: 'Y', value: 225 },
+    ],
+    inputsInline: true,
+    previousStatement: null,
+    nextStatement: null,
+    colour: 290,
+  },
+  {
+    type: 'pixi_set_rotation',
+    message0: 'set %1 rotation %2 deg',
+    args0: [
+      { type: 'input_value', name: 'OBJ' },
+      { type: 'field_number', name: 'DEG', value: 45 },
+    ],
+    inputsInline: true,
+    previousStatement: null,
+    nextStatement: null,
+    colour: 290,
+  },
+  {
+    type: 'pixi_set_alpha',
+    message0: 'set %1 alpha %2',
+    args0: [
+      { type: 'input_value', name: 'OBJ' },
+      { type: 'field_number', name: 'ALPHA', value: 0.5, min: 0, max: 1 },
+    ],
+    inputsInline: true,
+    previousStatement: null,
+    nextStatement: null,
+    colour: 290,
+  },
+  {
+    type: 'pixi_blur_filter',
+    message0: 'blur %1 by %2 px',
+    args0: [
+      { type: 'input_value', name: 'OBJ' },
+      { type: 'field_number', name: 'BLUR', value: 10, min: 0 },
+    ],
+    inputsInline: true,
+    previousStatement: null,
+    nextStatement: null,
+    colour: 290,
+    tooltip: 'Apply a BlurFilter to a PIXI DisplayObject',
+  },
+  {
+    type: 'pixi_tick',
+    message0: 'on pixi tick',
+    message1: 'do %1',
+    args1: [{ type: 'input_statement', name: 'DO' }],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 290,
+    tooltip: 'Run code every PIXI animation frame — cleaned up on Stop. Use to animate sprites.',
+  },
+  {
+    type: 'pixi_clear_stage',
+    message0: 'clear PIXI stage',
+    previousStatement: null,
+    nextStatement: null,
+    colour: 290,
+    tooltip: 'Remove all objects from the PIXI stage',
+  },
+
+  // ── GLShader ───────────────────────────────────────────────────────────────
+  {
+    type: 'glshader_preset',
+    message0: '%1 GLSL shader',
+    args0: [{
+      type: 'field_dropdown', name: 'PRESET', options: [
+        ['gradient', 'gradient'],
+        ['plasma', 'plasma'],
+        ['waves', 'waves'],
+        ['circles', 'circles'],
+        ['noise', 'noise'],
+      ],
+    }],
+    output: null,
+    colour: 15,
+    tooltip: 'Create a preset GLShader (WebGL/GLSL) — connect to "start GLShader"',
+  },
+  {
+    type: 'glshader_body',
+    message0: 'GLSL shader %1',
+    args0: [{ type: 'field_input', name: 'BODY', text: 'gl_FragColor = vec4(uv, sin(uTime)*0.5+0.5, 1.0);' }],
+    output: null,
+    colour: 15,
+    tooltip: 'Custom GLSL fragment body. Pre-declared: uv (vec2 0-1), uTime, uMouse, uCustom, uResolution. Set gl_FragColor.',
+  },
+  {
+    type: 'glshader_start',
+    message0: 'start GLShader %1',
+    args0: [{ type: 'input_value', name: 'SHADER' }],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 15,
+  },
+  {
+    type: 'glshader_stop',
+    message0: 'stop GLShader %1',
+    args0: [{ type: 'input_value', name: 'SHADER' }],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 15,
+  },
+  {
+    type: 'glshader_opacity',
+    message0: 'set GLShader %1 opacity %2',
+    args0: [
+      { type: 'input_value', name: 'SHADER' },
+      { type: 'field_number', name: 'OPACITY', value: 0.5, min: 0, max: 1 },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 15,
+  },
+
   // ── Camera ─────────────────────────────────────────────────────────────────
   {
     type: 'camera_open',
@@ -1241,6 +1422,71 @@ javascriptGenerator.forBlock['wm_browse'] = (b, g) => {
   return `await wm.browse(${key}, (${urlVar}, ${nameVar}) => {\n${body}}, { w: ${w}, h: ${h} });\n`;
 };
 
+// PIXI
+javascriptGenerator.forBlock['pixi_graphics_circle'] = (b) => {
+  const [x, y, r] = ['X', 'Y', 'R'].map(f => b.getFieldValue(f));
+  const color = b.getFieldValue('COLOR');
+  return [`(() => { const _g = new PIXI.Graphics(); _g.beginFill(${color}); _g.drawCircle(0,0,${r}); _g.endFill(); _g.x=${x}; _g.y=${y}; return _g; })()`, Order.FUNCTION_CALL];
+};
+javascriptGenerator.forBlock['pixi_graphics_rect'] = (b) => {
+  const [x, y, w, h] = ['X', 'Y', 'W', 'H'].map(f => b.getFieldValue(f));
+  const color = b.getFieldValue('COLOR');
+  return [`(() => { const _g = new PIXI.Graphics(); _g.beginFill(${color}); _g.drawRect(0,0,${w},${h}); _g.endFill(); _g.x=${x}; _g.y=${y}; return _g; })()`, Order.FUNCTION_CALL];
+};
+javascriptGenerator.forBlock['pixi_text'] = (b) => {
+  const str = JSON.stringify(b.getFieldValue('STR'));
+  const [x, y, size] = ['X', 'Y', 'SIZE'].map(f => b.getFieldValue(f));
+  const color = JSON.stringify(b.getFieldValue('COLOR'));
+  return [`(() => { const _t = new PIXI.Text(${str}, new PIXI.TextStyle({ fontSize: ${size}, fill: ${color} })); _t.x=${x}; _t.y=${y}; return _t; })()`, Order.FUNCTION_CALL];
+};
+javascriptGenerator.forBlock['pixi_sprite'] = (b) => {
+  const url = JSON.stringify(b.getFieldValue('URL'));
+  return [`PIXI.Sprite.from(${url})`, Order.FUNCTION_CALL];
+};
+javascriptGenerator.forBlock['pixi_add_to_stage'] = (b, g) => {
+  const obj = g.valueToCode(b, 'OBJ', Order.NONE) || 'null';
+  return `Stage.addChild(${obj});\n`;
+};
+javascriptGenerator.forBlock['pixi_set_pos'] = (b, g) => {
+  const obj = g.valueToCode(b, 'OBJ', Order.NONE) || 'null';
+  return `(${obj}).x = ${b.getFieldValue('X')}; (${obj}).y = ${b.getFieldValue('Y')};\n`;
+};
+javascriptGenerator.forBlock['pixi_set_rotation'] = (b, g) => {
+  const obj = g.valueToCode(b, 'OBJ', Order.NONE) || 'null';
+  return `(${obj}).rotation = ${b.getFieldValue('DEG')} * Math.PI / 180;\n`;
+};
+javascriptGenerator.forBlock['pixi_set_alpha'] = (b, g) => {
+  const obj = g.valueToCode(b, 'OBJ', Order.NONE) || 'null';
+  return `(${obj}).alpha = ${b.getFieldValue('ALPHA')};\n`;
+};
+javascriptGenerator.forBlock['pixi_blur_filter'] = (b, g) => {
+  const obj = g.valueToCode(b, 'OBJ', Order.NONE) || 'null';
+  return `(${obj}).filters = [Object.assign(new PIXI.filters.BlurFilter(), { blur: ${b.getFieldValue('BLUR')} })];\n`;
+};
+javascriptGenerator.forBlock['pixi_tick'] = (b, g) => {
+  const body = g.statementToCode(b, 'DO');
+  return `pixi.tick(() => {\n${body}});\n`;
+};
+javascriptGenerator.forBlock['pixi_clear_stage'] = () => `Stage.removeChildren();\n`;
+
+// GLShader
+javascriptGenerator.forBlock['glshader_preset'] = (b) =>
+  [`new GLShader(GLSL_PRESETS[${JSON.stringify(b.getFieldValue('PRESET'))}])`, Order.NEW];
+javascriptGenerator.forBlock['glshader_body'] = (b) =>
+  [`new GLShader(\`${b.getFieldValue('BODY')}\`)`, Order.NEW];
+javascriptGenerator.forBlock['glshader_start'] = (b, g) => {
+  const s = g.valueToCode(b, 'SHADER', Order.NONE) || 'null';
+  return `(${s}).start();\n`;
+};
+javascriptGenerator.forBlock['glshader_stop'] = (b, g) => {
+  const s = g.valueToCode(b, 'SHADER', Order.NONE) || 'null';
+  return `(${s}).stop();\n`;
+};
+javascriptGenerator.forBlock['glshader_opacity'] = (b, g) => {
+  const s = g.valueToCode(b, 'SHADER', Order.NONE) || 'null';
+  return `(${s}).opacity(${b.getFieldValue('OPACITY')});\n`;
+};
+
 // Camera
 javascriptGenerator.forBlock['camera_open'] = (b) =>
   [`await Camera.open({ index: ${b.getFieldValue('INDEX')} })`, Order.AWAIT];
@@ -1402,6 +1648,40 @@ export const TOOLBOX = {
         { kind: 'block', type: 'media_video_play' },
         { kind: 'block', type: 'media_video_stop' },
         { kind: 'block', type: 'media_image_layer' },
+      ],
+    },
+    {
+      kind: 'category', name: 'PIXI', colour: 290,
+      contents: [
+        {
+          kind: 'block', type: 'pixi_add_to_stage',
+          inputs: { OBJ: { block: { type: 'pixi_graphics_circle' } } },
+        },
+        { kind: 'block', type: 'pixi_graphics_circle' },
+        { kind: 'block', type: 'pixi_graphics_rect' },
+        { kind: 'block', type: 'pixi_text' },
+        { kind: 'block', type: 'pixi_sprite' },
+        { kind: 'block', type: 'pixi_add_to_stage' },
+        { kind: 'block', type: 'pixi_tick' },
+        { kind: 'block', type: 'pixi_set_pos' },
+        { kind: 'block', type: 'pixi_set_rotation' },
+        { kind: 'block', type: 'pixi_set_alpha' },
+        { kind: 'block', type: 'pixi_blur_filter' },
+        { kind: 'block', type: 'pixi_clear_stage' },
+      ],
+    },
+    {
+      kind: 'category', name: 'GLShader', colour: 15,
+      contents: [
+        {
+          kind: 'block', type: 'glshader_start',
+          inputs: { SHADER: { block: { type: 'glshader_preset' } } },
+        },
+        { kind: 'block', type: 'glshader_preset' },
+        { kind: 'block', type: 'glshader_body' },
+        { kind: 'block', type: 'glshader_start' },
+        { kind: 'block', type: 'glshader_stop' },
+        { kind: 'block', type: 'glshader_opacity' },
       ],
     },
     {

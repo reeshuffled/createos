@@ -1138,4 +1138,104 @@ audio.start();`,
       },
     ],
   },
+  {
+    name: "PIXI",
+    commands: [
+      {
+        label: "why PIXI vs Shader",
+        code: "// PIXI (WebGL) — use for: sprites, scene graph, particles, hit-testing, text rendering, filters on objects\n// Shader/GLShader — use for: full-screen pixel effects, procedural textures, camera FX\n// They layer: PIXI canvas (z=25) sits between draw (z=0) and Shader (z=30)\n\n// Quick example — bouncing sprite\nconst sprite = new PIXI.Graphics();\nsprite.beginFill(0xff6600);\nsprite.drawCircle(0, 0, 40);\nsprite.endFill();\nsprite.x = pixi.screen.width / 2;\nsprite.y = pixi.screen.height / 2;\nStage.addChild(sprite);\n\nlet vx = 4, vy = 3;\npixi.tick(() => {\n  sprite.x += vx;\n  sprite.y += vy;\n  if (sprite.x < 0 || sprite.x > pixi.screen.width)  vx *= -1;\n  if (sprite.y < 0 || sprite.y > pixi.screen.height) vy *= -1;\n});",
+        hint: "PIXI (WebGL): scene graph / sprites / particles / per-object effects. GLShader/Shader: full-screen GPU effects. They layer cleanly — PIXI at z=25, Shader at z=30.",
+      },
+      {
+        label: "sprite from URL",
+        code: "const sprite = PIXI.Sprite.from('https://example.com/hero.png');\nsprite.anchor.set(0.5);\nsprite.x = pixi.screen.width / 2;\nsprite.y = pixi.screen.height / 2;\nStage.addChild(sprite);\n\npixi.tick(delta => {\n  sprite.rotation += 0.02;\n});",
+        hint: "PIXI.Sprite.from(url) — load and display an image. anchor.set(0.5) centers the origin. pixi.tick(fn) — cleaned up on Stop.",
+      },
+      {
+        label: "graphics shapes",
+        code: "const g = new PIXI.Graphics();\ng.beginFill(0xff6600);\ng.drawRoundedRect(-60, -40, 120, 80, 15);\ng.endFill();\ng.lineStyle(4, 0xffffff);\ng.drawCircle(0, 0, 30);\ng.x = pixi.screen.width / 2;\ng.y = pixi.screen.height / 2;\nStage.addChild(g);\n\npixi.tick(() => { g.rotation += 0.01; });",
+        hint: "PIXI.Graphics — immediate-mode vector drawing with scene graph positioning. Shapes: drawRect, drawCircle, drawRoundedRect, drawPolygon, drawEllipse, lineTo/moveTo.",
+      },
+      {
+        label: "PIXI text",
+        code: "const style = new PIXI.TextStyle({\n  fontFamily: 'Arial', fontSize: 48,\n  fill: '#ffffff', fontWeight: 'bold',\n  dropShadow: true, dropShadowDistance: 4,\n});\nconst label = new PIXI.Text('hello pixi', style);\nlabel.anchor.set(0.5);\nlabel.x = pixi.screen.width / 2;\nlabel.y = pixi.screen.height / 2;\nStage.addChild(label);\n\npixi.tick(t => { label.text = `t = ${pixi.ticker.lastTime.toFixed(0)}ms`; });",
+        hint: "PIXI.Text + PIXI.TextStyle — rich text with shadows, stroke, font. Better than draw.text() for animating, filtering, or hit-testing text.",
+      },
+      {
+        label: "container + children",
+        code: "const group = new PIXI.Container();\nfor (let i = 0; i < 8; i++) {\n  const circle = new PIXI.Graphics();\n  const angle = (i / 8) * Math.PI * 2;\n  circle.beginFill(0x4488ff);\n  circle.drawCircle(Math.cos(angle) * 120, Math.sin(angle) * 120, 20);\n  circle.endFill();\n  group.addChild(circle);\n}\ngroup.x = pixi.screen.width / 2;\ngroup.y = pixi.screen.height / 2;\nStage.addChild(group);\n\npixi.tick(() => { group.rotation += 0.01; });",
+        hint: "PIXI.Container — group sprites/graphics and transform them together. All children inherit parent transform.",
+      },
+      {
+        label: "blur filter",
+        code: "const sprite = PIXI.Sprite.from('https://example.com/photo.jpg');\nsprite.width  = pixi.screen.width;\nsprite.height = pixi.screen.height;\nconst blur = new PIXI.filters.BlurFilter();\nblur.blur = 10;\nsprite.filters = [blur];\nStage.addChild(sprite);\n\n// Animate blur based on mouse\nconst ms = sensors.mouse();\nms.stream(m => { blur.blur = m.x * 40; });",
+        hint: "PIXI.filters.BlurFilter — apply to any DisplayObject. Other built-ins: ColorMatrixFilter, AlphaFilter, DisplacementFilter. Multiple filters: sprite.filters = [f1, f2].",
+      },
+      {
+        label: "particle burst",
+        code: "const particles = new PIXI.Container();\nStage.addChild(particles);\n\nfunction burst(x, y) {\n  for (let i = 0; i < 30; i++) {\n    const p = new PIXI.Graphics();\n    p.beginFill(Math.random() * 0xffffff);\n    p.drawCircle(0, 0, 4 + Math.random() * 8);\n    p.endFill();\n    p.x = x; p.y = y;\n    p.vx = (Math.random() - 0.5) * 12;\n    p.vy = (Math.random() - 0.5) * 12;\n    p.life = 1.0;\n    particles.addChild(p);\n  }\n}\n\ndocument.addEventListener('click', e => burst(e.clientX, e.clientY));\n\npixi.tick(delta => {\n  for (let i = particles.children.length - 1; i >= 0; i--) {\n    const p = particles.children[i];\n    p.x += p.vx; p.y += p.vy; p.vy += 0.4;\n    p.life -= 0.02;\n    p.alpha = p.life;\n    if (p.life <= 0) particles.removeChildAt(i);\n  }\n});",
+        hint: "Manual particle system — click to burst. PIXI scene graph makes per-particle transform and alpha trivial. For 10k+ particles use ParticleContainer instead.",
+      },
+      {
+        label: "audio reactive sprite",
+        code: "const g = new PIXI.Graphics();\ng.x = pixi.screen.width / 2;\ng.y = pixi.screen.height / 2;\nStage.addChild(g);\n\nconst synth = audio.synth();\nconst sig = audio.signal(audio.master);\naudio.start();\n\npixi.tick(() => {\n  const level = sig.value; // 0–1 RMS\n  g.clear();\n  g.beginFill(0x4488ff);\n  g.drawCircle(0, 0, 20 + level * 200);\n  g.endFill();\n  if (Math.random() < 0.02) synth.play('C4', '16n');\n});",
+        hint: "Combine PIXI ticker with audio.signal() — read .value, .bass, .mid, .high each frame to drive visual properties.",
+      },
+      {
+        label: "hit testing / click",
+        code: "const btn = new PIXI.Graphics();\nbtn.beginFill(0x4488ff);\nbtn.drawRoundedRect(0, 0, 200, 60, 12);\nbtn.endFill();\nbtn.x = pixi.screen.width / 2 - 100;\nbtn.y = pixi.screen.height / 2 - 30;\nbtn.interactive = true;\nbtn.cursor = 'pointer';\nbtn.on('pointerdown', () => draw.bg(Color.random()));\nStage.addChild(btn);\n\nconst label = new PIXI.Text('Click me', { fill: '#fff', fontSize: 28 });\nlabel.anchor.set(0.5);\nlabel.x = 100; label.y = 30;\nbtn.addChild(label);",
+        hint: "interactive = true + cursor = 'pointer' enables hit-testing. Events: pointerdown, pointerup, pointerover, pointerout, click. Works for any DisplayObject.",
+      },
+      {
+        label: "PIXI + WGSL shader layer",
+        code: "// PIXI sprites at z=25, WGSL shader at z=30 — composited cleanly\nconst g = new PIXI.Graphics();\ng.beginFill(0xffffff);\ng.drawCircle(0, 0, 80);\ng.endFill();\ng.x = pixi.screen.width / 2;\ng.y = pixi.screen.height / 2;\nStage.addChild(g);\n\n// Shader overlays on top with glow\nconst s = new Shader(`\n  let d = length(uv - vec2f(0.5));\n  let glow = pow(max(0.0, 0.3 - d), 3.0) * 8.0;\n  return vec4f(0.2, 0.5, 1.0, glow);\n`);\ns.start();\n\npixi.tick(t => { g.rotation += 0.01; });",
+        hint: "PIXI (WebGL, z=25) and Shader (WebGPU, z=30) stack on separate canvases — combine scene graph objects with fullscreen GPU effects.",
+      },
+    ],
+  },
+  {
+    name: "GLShader",
+    commands: [
+      {
+        label: "why GLShader vs Shader",
+        code: "// GLShader  — WebGL/GLSL  — works in ALL browsers (Chrome, Firefox, Safari, mobile)\n// Shader     — WebGPU/WGSL — Chrome 113+, Safari 18+, Edge 113+ only\n//\n// Same API: new GLShader(body, opts), .start(), .stop(), .set(), .bind(), .opacity(), .z()\n// GLSL has a massive training corpus — LLMs generate GLSL more fluently than WGSL\n// ShaderToy shaders (void mainImage) paste in directly with zero changes\n\nconst s = new GLShader(`\n  vec2 uv = gl_FragCoord.xy / uResolution;\n  float t = sin(uTime + uv.x * 10.0) * 0.5 + 0.5;\n  gl_FragColor = vec4(uv.x, t, uv.y, 1.0);\n`);\ns.start();",
+        hint: "GLShader (WebGL/GLSL): universal browser support, huge training corpus. Shader (WebGPU/WGSL): Chrome/Edge/Safari 18+ only, compute shaders, better GPU pipeline. Same .start()/.stop()/.set() API.",
+      },
+      {
+        label: "hello GLShader",
+        code: "// Uniforms pre-declared: uResolution (vec2), uMouse (vec2 0-1), uTime (float), uCustom (vec4)\n// Pre-declared in body: uv (vec2 0-1), time, mouse, custom\nconst s = new GLShader(`\n  float r = sin(uv.x * 10.0 + uTime) * 0.5 + 0.5;\n  float g = cos(uv.y * 8.0  - uTime) * 0.5 + 0.5;\n  gl_FragColor = vec4(r, g, 0.5, 1.0);\n`);\ns.start();",
+        hint: "Write the fragment body — uv, time, mouse, custom pre-declared. Set gl_FragColor to output color. Same opts as Shader: { z, opacity, video }.",
+      },
+      {
+        label: "GLShader preset",
+        code: "// GLSL_PRESETS: gradient, plasma, waves, circles, noise\nconst s = new GLShader(GLSL_PRESETS.plasma);\ns.start();",
+        hint: "GLSL_PRESETS — same set as SHADER_PRESETS but GLSL/WebGL. Each is a fragment body string.",
+      },
+      {
+        label: "ShaderToy paste-in",
+        code: "// Paste ShaderToy code directly — void mainImage auto-detected and wrapped\nconst s = new GLShader(`\nvoid mainImage(out vec4 fragColor, in vec2 fragCoord) {\n  vec2 uv = fragCoord / uResolution;\n  vec3 col = 0.5 + 0.5 * cos(uTime + uv.xyx + vec3(0,2,4));\n  fragColor = vec4(col, 1.0);\n}\n`);\ns.start();",
+        hint: "GLShader detects void mainImage(out vec4, in vec2) and wraps it automatically. Paste ShaderToy code with no edits needed.",
+      },
+      {
+        label: "full GLSL program",
+        code: "// Include void main() to take full control — no auto-wrapping\nconst s = new GLShader(`\nprecision highp float;\nuniform float uTime;\nvoid main() {\n  vec2 uv = gl_FragCoord.xy / vec2(1600.0, 900.0);\n  gl_FragColor = vec4(uv, sin(uTime)*0.5+0.5, 1.0);\n}\n`);\ns.start();",
+        hint: "If fragSrc contains void main() it's used as-is (full GLSL program). Declare your own uniforms — uResolution/uTime/uMouse/uCustom are not injected.",
+      },
+      {
+        label: "video / camera input",
+        code: "// uniform sampler2D uVideo auto-declared when video: is set\n// col = texture2D(uVideo, uv)  in body mode\nconst cam = new Camera();\nawait cam.open();\nconst s = new GLShader(`\n  vec4 col = texture2D(uVideo, uv);\n  float grey = dot(col.rgb, vec3(0.299, 0.587, 0.114));\n  gl_FragColor = vec4(grey, grey * 0.8, grey * 0.6, 1.0);\n`, { video: cam });\ns.start();",
+        hint: "Pass { video: cam } in opts — uVideo sampler2D declared, col (texture2D result) pre-assigned in body. Sources: Camera instance, HTMLVideoElement, HTMLCanvasElement.",
+      },
+      {
+        label: "custom uniform",
+        code: "const s = new GLShader(`\n  float r = sin(uv.x * 6.28 + uTime * uCustom.x) * 0.5 + 0.5;\n  gl_FragColor = vec4(r, uCustom.y, uCustom.z, 1.0);\n`);\ns.set([2.0, 0.3, 0.8, 0.0]); // speed, g, b, unused\ns.start();\n\n// Drive with audio:\nconst sig = audio.signal(audio.master);\naudio.start();\ns.bind(sig); // fills custom = [rms, bass, mid, high] each frame",
+        hint: "s.set([x,y,z,w]) or s.set(index, value) — same as Shader.set(). s.bind(audioSignal) auto-fills uCustom = [rms, bass, mid, high] each frame.",
+      },
+      {
+        label: "GLShader + PIXI layer",
+        code: "// GLShader full-screen (WebGL), PIXI sprites on top\nconst s = new GLShader(GLSL_PRESETS.plasma);\ns.start();\n\nconst label = new PIXI.Text('GLSL + PIXI', new PIXI.TextStyle({\n  fontSize: 64, fill: '#fff', fontWeight: 'bold',\n  dropShadow: true, dropShadowDistance: 6,\n}));\nlabel.anchor.set(0.5);\nlabel.x = pixi.screen.width / 2;\nlabel.y = pixi.screen.height / 2;\nStage.addChild(label);\n\npixi.tick(t => { label.rotation = Math.sin(pixi.ticker.lastTime / 1000) * 0.2; });",
+        hint: "GLShader (z=30) + PIXI (z=25) layer cleanly. Use GLShader for full-screen procedural backgrounds, PIXI for text/sprites/interactions on top.",
+      },
+    ],
+  },
 ];

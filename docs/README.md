@@ -7,7 +7,9 @@ Press **?** in the IDE for the in-app audio quick reference.
 | Doc | What it covers |
 |-----|---------------|
 | [audio.md](audio.md) | Synths, effects, patterns, scales, microphone, audio→visual |
-| [shader.md](shader.md) | WebGPU fragment shaders, uniforms, WGSL |
+| [shader.md](shader.md) | WebGPU/WGSL fragment shaders (Chrome/Edge/Safari 18+) |
+| [glsl-shader.md](glsl-shader.md) | WebGL/GLSL fragment shaders — all browsers, ShaderToy paste-in |
+| [pixi.md](pixi.md) | PIXI.js — sprites, scene graph, particles, filters, hit-testing |
 | [canvas.md](canvas.md) | Canvas 2D drawing, layers, CSS effects |
 | [media.md](media.md) | Images, video layers |
 | [vision.md](vision.md) | Object detection, gesture, face expression |
@@ -27,8 +29,8 @@ Press **?** in the IDE for the in-app audio quick reference.
 | 0         | 20          | Main canvas — `draw`, `getCanvas(0)` |
 | 1–4       | 21–24       | Safe range for additional user layers |
 | 5+        | 25+         | Overlaps Media (CSS 25) and Shader (CSS 30) defaults |
-| —         | 25          | Media default (`Media.image`, `Media.video`) |
-| —         | 30          | Shader default (`new Shader(...)`) |
+| —         | 25          | Media default (`Media.image`, `Media.video`) · PIXI canvas (`window.pixi`) |
+| —         | 30          | Shader default (`new Shader(...)`) · GLShader default (`new GLShader(...)`) |
 
 ## Global Functions
 
@@ -64,4 +66,10 @@ sensors.battery()   // async → level/charging + .onChange
 desktop.add(url, opts?)   // add file icon to desktop (see desktop.md)
 desktop.files()           // list all file icons
 desktop.onFile(fn)        // callback when user opens a file icon
+pixi                      // PIXI.Application — scene graph renderer (see pixi.md)
+Stage                     // pixi.stage shorthand — Stage.addChild(sprite)
+PIXI                      // PIXI namespace — Sprite, Graphics, Text, TextStyle, Container, filters.*
+pixi.tick(fn)             // tracked animation callback — cleaned up on Stop
+GLShader                  // WebGL/GLSL shader — works in all browsers (see glsl-shader.md)
+GLSL_PRESETS              // { gradient, plasma, waves, circles, noise } fragment body strings
 ```

@@ -4,6 +4,8 @@ import { getDraw } from '../api/draw.js';
 import { Layer } from '../api/layer.js';
 import { startAudio, cleanupAudio } from '../api/audio.js';
 import { cleanupShaders } from '../api/shader.js';
+import { cleanupGLShaders } from '../api/glsl-shader.js';
+import { cleanupPixi } from '../api/pixi.js';
 import { cleanupViz } from '../api/viz.js';
 import { cleanupMedia } from '../api/media.js';
 import { cleanupVideoSignal } from '../api/video-signal.js';
@@ -780,6 +782,8 @@ export class EditorInstance {
     stopVision();
     cleanupAudio();
     cleanupShaders();
+    cleanupGLShaders();
+    cleanupPixi();
     cleanupViz();
     cleanupMedia();
     cleanupVideoSignal();

@@ -4,6 +4,8 @@ import { initCamera, Camera, cleanupCameras } from "../api/camera.js";
 import { initMic } from "../api/mic.js";
 import { audio, startAudio, cleanupAudio } from "../api/audio.js";
 import { Shader, ShaderFX, cleanupShaders } from "../api/shader.js";
+import { GLShader, GLSL_PRESETS } from "../api/glsl-shader.js";
+import { initPixi, PIXI } from "../api/pixi.js";
 import { AudioViz, cleanupViz } from "../api/viz.js";
 import { Media, cleanupMedia } from "../api/media.js";
 import { VideoSignalAPI, cleanupVideoSignal } from "../api/video-signal.js";
@@ -38,8 +40,11 @@ window.video    = VideoSignalAPI;
 window.sensors  = SensorsAPI;
 window.desktop  = DesktopAPI;
 window.audio    = audio;
-window.Shader   = Shader;
-window.ShaderFX = ShaderFX;
+window.Shader      = Shader;
+window.ShaderFX    = ShaderFX;
+window.GLShader    = GLShader;
+window.GLSL_PRESETS = GLSL_PRESETS;
+window.PIXI        = PIXI;
 // Vector constructor stubs — used as type hints in Shader JS function params.
 // In the JS function body these are real values; the transpiler maps them to WGSL vec types.
 window.vec2 = (x = 0, y = 0)             => ({ x, y, _wgsl: 'vec2f' });
@@ -103,6 +108,9 @@ window.onload = () => {
     });
   });
   initDesktop(window.wm);
+
+  // PIXI.js — init once at startup (synchronous in v7). Sets window.pixi + window.Stage.
+  initPixi();
 
   const _stage = document.getElementById('wm-stage');
 

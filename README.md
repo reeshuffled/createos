@@ -11,7 +11,8 @@ A live coding environment for creating audiovisual experiences in the browser �
 
 ## What you can make
 
-- **GPU shaders** — full-screen WebGPU/WGSL fragment shaders with `time`, `uv`, `mouse`, and custom uniforms
+- **GPU shaders** — full-screen WebGPU/WGSL fragment shaders (`Shader`) or WebGL/GLSL (`GLShader`, all browsers, ShaderToy paste-in) with `time`, `uv`, `mouse`, and custom uniforms
+- **PIXI.js** — WebGL scene graph for sprites, particles, rich text, per-object filters, and hit-testing; layers cleanly with shaders and draw
 - **Audio synthesis** — synths, sequencers, effects chains via [Tone.js](https://tonejs.github.io/)
 - **Voice & TTS** — recognize spoken words with `audio.onWord()` / `audio.onSpeech()`, speak with `audio.say()`
 - **Camera + vision** — react to hand gestures, facial expressions, and detected objects via [MediaPipe](https://github.com/google-ai-edge/mediapipe)
@@ -25,11 +26,22 @@ A live coding environment for creating audiovisual experiences in the browser �
 - [CodeMirror 5](https://codemirror.net/5/) with syntax highlighting, bracket matching, code folding, and inline widgets
   - **Color swatches** — click any color string to open an HSL picker; edits write back to the source
   - **Number scrubbers** — drag any numeric literal to change its value live
-- **Blocks panel** (toggle on/off) — visual [Blockly](https://developers.google.com/blockly) workspace for Audio, Shader, Vision, Canvas, and Media blocks; coexists with the text editor
+- **Blocks panel** (toggle on/off) — visual [Blockly](https://developers.google.com/blockly) workspace for Audio, Shader, GLShader, PIXI, Vision, Canvas, and Media blocks; coexists with the text editor
 - **API drawer** (toggle on/off) — drag-to-text code snippets for every API
 - Infinite loop protection ([Esprima](https://esprima.org/))
 - Friendly runtime error messages
 - Pause / Resume program execution
+
+## Known Weird Behavior
+
+* Is there a way to not exit fullscreen when using the browser’s file picker?
+    * Not feasible. Browser forces fullscreen exit for native file pickers — security feature, can't override. You can try re-requesting fullscreen after the picker resolves, but:
+        * Causes visible flash (exit → dialog → re-enter)
+        * requestFullscreen() needs a user gesture; whether the picker's .then() counts varies by browser/version
+        * Unreliable on Safari
+    * Proactive exit is the right call — makes behavior predictable instead of broken. Current fix stands.
+* Can you remove that annoying upload prompt?
+    * That's Chrome/browser security — required before showDirectoryPicker grants folder access. Can't remove it, it's outside our control.
 
 ## APIs available in user code
 
@@ -40,16 +52,46 @@ s.play('C4', '8n');
 audio.bpm(120);
 audio.start();
 
-// Shaders
+// Shaders — WebGPU/WGSL (Chrome/Edge/Safari 18+)
 const shader = new Shader(`
   let col = vec3f(uv.x, uv.y, sin(time) * 0.5 + 0.5);
   return vec4f(col, 1.0);
 `);
 shader.start();
 
+// GLShader — WebGL/GLSL (all browsers, ShaderToy paste-in)
+new GLShader(`
+  gl_FragColor = vec4(uv.x, uv.y, sin(uTime)*0.5+0.5, 1.0);
+`).start();
+
+// ShaderToy paste-in — void mainImage auto-detected, zero edits needed
+new GLShader(`
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+  vec2 uv = fragCoord / uResolution;
+  vec3 col = 0.5 + 0.5 * cos(uTime + uv.xyx + vec3(0,2,4));
+  fragColor = vec4(col, 1.0);
+}
+`).start();
+
 // Post-process shader FX
 const fx = new ShaderFX('blur');
 fx.start();
+
+// PIXI — scene graph, sprites, particles, filters (WebGL, z=25)
+const g = new PIXI.Graphics();
+g.beginFill(0x4488ff);
+g.drawCircle(0, 0, 60);
+g.endFill();
+g.x = pixi.screen.width / 2;
+g.y = pixi.screen.height / 2;
+Stage.addChild(g);
+pixi.tick(() => { g.rotation += 0.01; }); // cleaned up on Stop
+
+const sprite = PIXI.Sprite.from('https://example.com/hero.png');
+sprite.anchor.set(0.5);
+sprite.interactive = true;
+sprite.on('pointerdown', () => draw.bg(Color.random()));
+Stage.addChild(sprite);
 
 // Camera streams
 const cam = new Camera();
@@ -162,16 +204,6 @@ geo.stream(g => draw.text(`${g.lat?.toFixed(4)}, ${g.lon?.toFixed(4)}`, 50, 50))
 const bat = await sensors.battery();
 console.log(bat.level, bat.charging);
 ```
-
-## Tech stack
-
-- **Vite** — build tooling
-- **CodeMirror 5** — editor
-- **Blockly** — visual block coding
-- **Tone.js** — audio synthesis and sequencing
-- **WebGPU + WGSL** — GPU fragment shaders
-- **MediaPipe Tasks Vision** — gesture, face, and object detection
-- **Esprima** — infinite loop detection
 
 ## Dev
 
