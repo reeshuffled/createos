@@ -251,6 +251,46 @@ Blockly.defineBlocksWithJsonArray([
     tooltip: 'Apply a named shader preset to an AudioViz — thermal, cool, rainbow, mono, neon',
   },
 
+  // ── Audio Mic / Speech ─────────────────────────────────────────────────────
+  {
+    type: 'audio_level',
+    message0: 'mic level',
+    output: 'Number',
+    colour: 260,
+    tooltip: 'Live mic amplitude 0–1 (RMS). Enable mic in toolbar first.',
+  },
+  {
+    type: 'audio_on_level',
+    message0: 'when mic louder than %1',
+    args0: [{ type: 'field_number', name: 'THRESHOLD', value: 0.6, min: 0, max: 1, precision: 0.01 }],
+    message1: 'do %1',
+    args1: [{ type: 'input_statement', name: 'DO' }],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 260,
+    tooltip: 'Run code when mic amplitude exceeds threshold (0–1). Enable mic in toolbar first.',
+  },
+  {
+    type: 'audio_on_word',
+    message0: 'when word %1 spoken',
+    args0: [{ type: 'field_input', name: 'WORD', text: 'hello' }],
+    message1: 'do %1',
+    args1: [{ type: 'input_statement', name: 'DO' }],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 260,
+    tooltip: 'Run code when a specific word is spoken. Uses Web Speech API (Chrome/Edge).',
+  },
+  {
+    type: 'audio_say',
+    message0: 'say %1',
+    args0: [{ type: 'field_input', name: 'TEXT', text: 'hello' }],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 260,
+    tooltip: 'Speak text using browser text-to-speech.',
+  },
+
   // ── Shader ─────────────────────────────────────────────────────────────────
   // Creator blocks (output = Shader) — plug into start / stop / opacity / set_uniform
   {
@@ -891,6 +931,21 @@ javascriptGenerator.forBlock['audio_viz_shader'] = (b, g) => {
   return `(${v}).shader(${JSON.stringify(b.getFieldValue('PRESET'))});\n`;
 };
 
+// Audio mic / speech
+javascriptGenerator.forBlock['audio_level'] = () => ['audio.level', Order.MEMBER];
+javascriptGenerator.forBlock['audio_on_level'] = (b, g) => {
+  const threshold = b.getFieldValue('THRESHOLD');
+  const body = g.statementToCode(b, 'DO');
+  return `audio.onLevel(${threshold}, () => {\n${body}});\n`;
+};
+javascriptGenerator.forBlock['audio_on_word'] = (b, g) => {
+  const word = b.getFieldValue('WORD');
+  const body = g.statementToCode(b, 'DO');
+  return `audio.onWord(${JSON.stringify(word)}, () => {\n${body}});\n`;
+};
+javascriptGenerator.forBlock['audio_say'] = (b) =>
+  `audio.say(${JSON.stringify(b.getFieldValue('TEXT'))});\n`;
+
 // Shader creators (value blocks)
 javascriptGenerator.forBlock['shader_preset'] = (b) =>
   [`ShaderFX.presetShader(${JSON.stringify(b.getFieldValue('PRESET'))})`, Order.FUNCTION_CALL];
@@ -1135,10 +1190,10 @@ export const TOOLBOX = {
         { kind: 'block', type: 'audio_play' },
         { kind: 'block', type: 'audio_bpm' },
         { kind: 'block', type: 'audio_transport_start' },
-        { kind: 'block', type: 'audio_volume' },
         { kind: 'block', type: 'audio_reverb' },
         { kind: 'block', type: 'audio_delay' },
         { kind: 'block', type: 'audio_distort' },
+        { kind: 'block', type: 'audio_volume' },
         { kind: 'block', type: 'audio_connect' },
         // Audio visualizer
         {
@@ -1148,6 +1203,12 @@ export const TOOLBOX = {
         { kind: 'block', type: 'audio_viz' },
         { kind: 'block', type: 'audio_viz_stop' },
         { kind: 'block', type: 'audio_viz_shader' },
+        // Mic triggers
+        { kind: 'block', type: 'audio_on_level' },
+        { kind: 'block', type: 'audio_level' },
+        // Speech
+        { kind: 'block', type: 'audio_on_word' },
+        { kind: 'block', type: 'audio_say' },
       ],
     },
     {

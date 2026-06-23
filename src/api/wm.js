@@ -73,6 +73,64 @@ function _makeFileEntry(entry, depth, onSelect) {
   return li;
 }
 
+function _pickDirViaInput() {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.webkitdirectory = true;
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      document.body.removeChild(input);
+      const files = [...input.files];
+      if (!files.length) { resolve(null); return; }
+      const name = files[0].webkitRelativePath?.split('/')[0] || 'Files';
+      resolve({ name, files });
+    });
+    input.click();
+  });
+}
+
+function _pickFileViaInput(opts = {}) {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.style.display = 'none';
+    if (opts.accept) input.accept = opts.accept;
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      document.body.removeChild(input);
+      const file = input.files[0];
+      resolve(file ? URL.createObjectURL(file) : null);
+    });
+    input.click();
+  });
+}
+
+function _renderFlatFiles(container, files, onSelect) {
+  const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name));
+  for (const file of sorted) {
+    if (file.name.startsWith('.')) continue;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:5px;padding:3px 8px;cursor:pointer;font-family:monospace;font-size:11px;white-space:nowrap;';
+    const icon = document.createElement('span');
+    icon.textContent = _fileIcon(file.name.split('.').pop().toLowerCase());
+    const name = document.createElement('span');
+    name.textContent = file.name;
+    name.style.color = '#222';
+    row.appendChild(icon);
+    row.appendChild(name);
+    row.addEventListener('click', () => {
+      const url = URL.createObjectURL(file);
+      onSelect?.(url, file.name, null);
+    });
+    row.addEventListener('mouseenter', () => { row.style.background = '#e8f0fe'; });
+    row.addEventListener('mouseleave', () => { row.style.background = ''; });
+    container.appendChild(row);
+  }
+}
+
 async function _renderDirContents(container, dirHandle, depth, onSelect) {
   const entries = [];
   for await (const entry of dirHandle.values()) entries.push(entry);
@@ -88,10 +146,9 @@ async function _renderDirContents(container, dirHandle, depth, onSelect) {
 
 const LAYOUTS = {
   split: {
-    'win-toolkit': { x: 0,    y: 0, w: 0.13, h: 1,    show: true },
-    'win-editor':  { x: 0.13, y: 0, w: 0.87, h: 1,    show: true },
-    'win-canvas':  { show: false },
-    'win-console': { show: false },
+    'win-toolkit':  { x: 0,    y: 0, w: 0.13, h: 1,    show: true },
+    'win-editor-1': { x: 0.13, y: 0, w: 0.87, h: 1,    show: true },
+    'win-canvas-1': { show: false },
   },
 };
 
@@ -104,6 +161,45 @@ export function initWM(onContentResize) {
   const fileHandles = new Map();
   const _builtinFactories = new Map();
   let spawnCounter = 0;
+
+  // ── Taskbar ────────────────────────────────────────────────────────────────
+  const taskbar = document.createElement('div');
+  taskbar.id = 'wm-taskbar';
+  desktop.appendChild(taskbar);
+
+  function _minimizeToTaskbar(win) {
+    const winId = win.id;
+    const title = win.querySelector('.wm-title')?.textContent ?? winId;
+    savedGeometry.set(winId + '_min', { left: win.style.left, top: win.style.top, width: win.style.width, height: win.style.height });
+    win.style.display = 'none';
+    win._wmMinimized = true;
+
+    const chip = document.createElement('div');
+    chip.className = 'wm-taskbar-chip';
+    chip.dataset.winId = winId;
+    const dot = document.createElement('span');
+    dot.className = 'wm-chip-dot';
+    const label = document.createElement('span');
+    label.textContent = title;
+    chip.appendChild(dot);
+    chip.appendChild(label);
+    chip.addEventListener('click', () => _restoreFromTaskbar(winId));
+    taskbar.appendChild(chip);
+    taskbar.style.display = 'flex';
+  }
+
+  function _restoreFromTaskbar(winId) {
+    const win = document.getElementById(winId);
+    if (!win) return;
+    const saved = savedGeometry.get(winId + '_min');
+    if (saved) { win.style.left = saved.left; win.style.top = saved.top; win.style.width = saved.width; win.style.height = saved.height; }
+    win.style.display = 'flex';
+    win._wmMinimized = false;
+    taskbar.querySelector(`[data-win-id="${winId}"]`)?.remove();
+    if (!taskbar.querySelector('.wm-taskbar-chip')) taskbar.style.display = 'none';
+    bringToFront(win);
+    onContentResize?.();
+  }
 
   // Per-window Tone.Channel nodes — created lazily on first use
   const _channels = new Map();
@@ -249,27 +345,30 @@ export function initWM(onContentResize) {
     e.preventDefault();
   });
 
-  // Resize via corner handles (SE and SW)
+  // Resize via edge/corner handles
   desktop.addEventListener('mousedown', e => {
-    const isSE = e.target.classList.contains('wm-resize');
-    const isSW = e.target.classList.contains('wm-resize-sw');
-    if (!isSE && !isSW) return;
-    const win = e.target.closest('.wm-win');
+    const handle = e.target.closest('.wm-resize-handle');
+    if (!handle) return;
+    const dir = handle.dataset.resize;
+    const win = handle.closest('.wm-win');
     bringToFront(win);
     const sx = e.clientX, sy = e.clientY;
     const sw = win.offsetWidth, sh = win.offsetHeight;
-    const sl = win.offsetLeft;
+    const sl = win.offsetLeft,  st = win.offsetTop;
     const onMove = e => {
-      const dx = e.clientX - sx;
-      const dy = e.clientY - sy;
-      if (isSE) {
-        win.style.width  = `${Math.max(180, sw + dx)}px`;
-      } else {
-        const newW = Math.max(180, sw - dx);
-        win.style.width = `${newW}px`;
-        win.style.left  = `${sl + sw - newW}px`;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (dir.includes('e')) win.style.width  = `${Math.max(180, sw + dx)}px`;
+      if (dir.includes('s')) win.style.height = `${Math.max(80,  sh + dy)}px`;
+      if (dir.includes('w')) {
+        const nw = Math.max(180, sw - dx);
+        win.style.width = `${nw}px`;
+        win.style.left  = `${sl + sw - nw}px`;
       }
-      win.style.height = `${Math.max(80, sh + dy)}px`;
+      if (dir.includes('n')) {
+        const nh = Math.max(80, sh - dy);
+        win.style.height = `${nh}px`;
+        win.style.top    = `${st + sh - nh}px`;
+      }
     };
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
@@ -304,10 +403,21 @@ export function initWM(onContentResize) {
     });
   });
 
-  // Close button
+  // Minimize button
+  desktop.addEventListener('click', e => {
+    if (!e.target.closest('.wm-min')) return;
+    const win = e.target.closest('.wm-win');
+    if (win) _minimizeToTaskbar(win);
+  });
+
+  // Close button — supports custom _wmOnClose handler (e.g. editor confirmation)
   desktop.addEventListener('click', e => {
     if (!e.target.classList.contains('wm-close')) return;
     const win = e.target.closest('.wm-win');
+    if (win._wmOnClose) {
+      win._wmOnClose(); // handler responsible for removal
+      return;
+    }
     if (spawnedIds.has(win.id)) {
       win._wmCleanup?.();
       win._wmRescueContent?.();
@@ -506,12 +616,19 @@ export function initWM(onContentResize) {
         <div class="wm-titlebar">
           <span class="wm-title">${title}</span>
           <span class="wm-btn wm-dup" title="Duplicate"><i class="fa-regular fa-copy"></i></span>
+          <span class="wm-btn wm-min" title="Minimize">─</span>
           <span class="wm-btn wm-max" title="Maximize"><i class="fa-regular fa-window-maximize"></i></span>
           <span class="wm-btn wm-close" title="Close">×</span>
         </div>
         <div class="wm-body" style="overflow:auto;position:relative;"></div>
-        <div class="wm-resize-sw"></div>
-        <div class="wm-resize"></div>
+        <div class="wm-resize-handle" data-resize="n"></div>
+        <div class="wm-resize-handle" data-resize="s"></div>
+        <div class="wm-resize-handle" data-resize="e"></div>
+        <div class="wm-resize-handle" data-resize="w"></div>
+        <div class="wm-resize-handle" data-resize="ne"></div>
+        <div class="wm-resize-handle" data-resize="nw"></div>
+        <div class="wm-resize-handle" data-resize="se"></div>
+        <div class="wm-resize-handle" data-resize="sw"></div>
       `;
       const body = win.querySelector('.wm-body');
 
@@ -602,13 +719,19 @@ export function initWM(onContentResize) {
           }
         } catch (_) { /* handle stale — fall through to picker */ }
       }
-      const pickerOpts = {
-        multiple: false,
-        ...opts,
-      };
-      const [handle] = await window.showOpenFilePicker(pickerOpts);
-      if (key) fileHandles.set(key, handle);
-      return URL.createObjectURL(await handle.getFile());
+      if (window.showOpenFilePicker) {
+        try {
+          const [handle] = await window.showOpenFilePicker({ multiple: false, ...opts });
+          if (key) fileHandles.set(key, handle);
+          return URL.createObjectURL(await handle.getFile());
+        } catch (err) {
+          if (err?.name === 'AbortError') throw err;
+          // API blocked — fall through to input fallback
+        }
+      }
+      const url = await _pickFileViaInput(opts);
+      if (!url) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' });
+      return url;
     },
 
     /**
@@ -619,7 +742,9 @@ export function initWM(onContentResize) {
      * @returns {Promise<string>}  window id
      */
     async browse(key, onSelect, spawnOpts = {}) {
-      let dirHandle;
+      let dirHandle = null;
+      let fallback = null;
+
       if (key && fileHandles.has(key)) {
         const h = fileHandles.get(key);
         if (h.kind === 'directory') {
@@ -629,16 +754,29 @@ export function initWM(onContentResize) {
           } catch (_) {}
         }
       }
+
       if (!dirHandle) {
-        dirHandle = await window.showDirectoryPicker({ mode: 'read' });
-        if (key) fileHandles.set(key, dirHandle);
+        if (window.showDirectoryPicker) {
+          try {
+            dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+            if (key) fileHandles.set(key, dirHandle);
+          } catch (err) {
+            if (err?.name === 'AbortError') throw err;
+            // API blocked (e.g. Brave Shields) — fall through to input fallback
+          }
+        }
+        if (!dirHandle) {
+          fallback = await _pickDirViaInput();
+          if (!fallback) throw Object.assign(new Error('Cancelled'), { name: 'AbortError' });
+        }
       }
 
-      const winId = api.spawn(dirHandle.name, {
+      const dirName = dirHandle ? dirHandle.name : fallback.name;
+      const winId = api.spawn(dirName, {
         type: 'html',
         html: '',
         w: spawnOpts.w ?? 260,
-        h: spawnOpts.h ?? 400,
+        h: spawnOpts.h ?? 420,
         x: spawnOpts.x,
         y: spawnOpts.y,
         id: spawnOpts.id,
@@ -646,11 +784,53 @@ export function initWM(onContentResize) {
       const win = document.getElementById(winId);
       const body = win.querySelector('.wm-body');
       body.innerHTML = '';
-      body.style.overflow = 'auto';
+      body.style.overflow = 'hidden';
       body.style.flexDirection = 'column';
-      body.style.padding = '2px 0';
+      body.style.padding = '0';
 
-      _renderDirContents(body, dirHandle, 0, onSelect);
+      const list = document.createElement('div');
+      list.style.cssText = 'flex:1;overflow:auto;padding:2px 0;';
+
+      const footer = document.createElement('div');
+      footer.style.cssText = 'flex-shrink:0;padding:5px 6px;border-top:1px solid #e0e0e0;background:#fafafa;';
+      const changeBtn = document.createElement('button');
+      changeBtn.textContent = '📁 Change folder…';
+      changeBtn.style.cssText = 'width:100%;font-size:11px;padding:3px 8px;cursor:pointer;background:#f0f0f0;border:1px solid #ccc;border-radius:3px;';
+      footer.appendChild(changeBtn);
+      body.appendChild(list);
+      body.appendChild(footer);
+
+      async function renderDir(dh, fb) {
+        list.innerHTML = '';
+        win.querySelector('.wm-title').textContent = dh ? dh.name : fb.name;
+        if (dh) {
+          await _renderDirContents(list, dh, 0, onSelect);
+        } else {
+          _renderFlatFiles(list, fb.files, onSelect);
+        }
+      }
+
+      changeBtn.addEventListener('click', async () => {
+        let newDirHandle = null;
+        let newFallback = null;
+        if (window.showDirectoryPicker) {
+          try {
+            newDirHandle = await window.showDirectoryPicker({ mode: 'read' });
+            if (key) fileHandles.set(key, newDirHandle);
+          } catch (err) {
+            if (err?.name === 'AbortError') return;
+          }
+        }
+        if (!newDirHandle) {
+          newFallback = await _pickDirViaInput();
+          if (!newFallback) return;
+        }
+        dirHandle = newDirHandle;
+        fallback = newFallback;
+        await renderDir(dirHandle, fallback);
+      });
+
+      await renderDir(dirHandle, fallback);
       return winId;
     },
 

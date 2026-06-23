@@ -1,11 +1,45 @@
 import * as Tone from "tone";
 import { AudioViz } from "./viz.js";
 
+const _nativeSetInterval = window.setInterval.bind(window);
+const _nativeClearInterval = window.clearInterval.bind(window);
+
 const _tracked = [];
+const _cleanupFns = [];
+let _recognition = null;
+const _wordHandlers = new Map();
+const _speechHandlers = [];
 
 function track(d) {
   _tracked.push(d);
   return d;
+}
+
+function _ensureRecognition() {
+  if (_recognition) return _recognition;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { console.warn('Web Speech API not supported in this browser'); return null; }
+  const r = new SR();
+  r.continuous = true;
+  r.interimResults = false;
+  r.onresult = (e) => {
+    const transcript = Array.from(e.results)
+      .slice(e.resultIndex)
+      .filter(res => res.isFinal)
+      .map(res => res[0].transcript.trim().toLowerCase())
+      .join(' ');
+    if (!transcript) return;
+    _speechHandlers.forEach(fn => fn(transcript));
+    transcript.split(/\s+/).forEach(word => {
+      const handlers = _wordHandlers.get(word);
+      if (handlers) handlers.forEach(fn => fn());
+    });
+  };
+  r.onerror = (e) => { if (e.error !== 'no-speech') console.warn('Speech recognition error:', e.error); };
+  r.onend = () => { if (_recognition === r) { try { r.start(); } catch (_) {} } };
+  try { r.start(); } catch (e) { console.warn('Speech recognition failed to start:', e.message); return null; }
+  _recognition = r;
+  return r;
 }
 
 export function cleanupAudio() {
@@ -15,6 +49,16 @@ export function cleanupAudio() {
     try { d.dispose(); } catch (_) {}
   });
   _tracked.length = 0;
+  _cleanupFns.forEach(f => { try { f(); } catch (_) {} });
+  _cleanupFns.length = 0;
+  if (_recognition) {
+    _recognition.onend = null;
+    try { _recognition.stop(); } catch (_) {}
+    _recognition = null;
+  }
+  _wordHandlers.clear();
+  _speechHandlers.length = 0;
+  try { speechSynthesis.cancel(); } catch (_) {}
 }
 
 export function startAudio() {
@@ -240,6 +284,65 @@ class AudioAPI {
     const m = track(new Tone.UserMedia());
     await m.open();
     return m;
+  }
+
+  // Live RMS amplitude 0–1 from the harness mic AnalyserNode. Returns 0 if mic is off.
+  get level() {
+    const analyser = window.__ar_mic_analyser;
+    if (!analyser) return 0;
+    const data = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = (data[i] - 128) / 128;
+      sum += v * v;
+    }
+    return Math.sqrt(sum / data.length);
+  }
+
+  // Edge-triggered amplitude callback. onExit optional (fires when level drops below threshold).
+  onLevel(threshold, onEnter, onExit) {
+    let wasAbove = false;
+    const id = _nativeSetInterval(() => {
+      const above = this.level >= threshold;
+      if (above && !wasAbove) { wasAbove = true; onEnter(); }
+      else if (!above && wasAbove) { wasAbove = false; if (onExit) onExit(); }
+    }, 50);
+    _cleanupFns.push(() => _nativeClearInterval(id));
+  }
+
+  // ── Speech ───────────────────────────────────────────────────────────────
+  // Fires fn when the spoken word matches. Uses Web Speech API (Chrome/Edge only).
+  onWord(word, fn) {
+    const key = word.toLowerCase();
+    if (!_wordHandlers.has(key)) _wordHandlers.set(key, []);
+    _wordHandlers.get(key).push(fn);
+    _ensureRecognition();
+  }
+
+  // Fires fn with full transcript string on every recognized utterance.
+  onSpeech(fn) {
+    _speechHandlers.push(fn);
+    _ensureRecognition();
+  }
+
+  // Speak text via browser TTS. opts: { voice, rate (0.1–10), pitch (0–2), volume (0–1), lang }
+  say(text, opts = {}) {
+    const utt = new SpeechSynthesisUtterance(text);
+    if (opts.rate   !== undefined) utt.rate   = opts.rate;
+    if (opts.pitch  !== undefined) utt.pitch  = opts.pitch;
+    if (opts.volume !== undefined) utt.volume = opts.volume;
+    if (opts.lang   !== undefined) utt.lang   = opts.lang;
+    if (opts.voice  !== undefined) {
+      const v = speechSynthesis.getVoices().find(v => v.name === opts.voice);
+      if (v) utt.voice = v;
+    }
+    speechSynthesis.speak(utt);
+  }
+
+  // Returns list of available TTS voice names for use with audio.say({ voice: '...' }).
+  voices() {
+    return speechSynthesis.getVoices().map(v => v.name);
   }
 
   // ── Analysis ─────────────────────────────────────────────────────────────

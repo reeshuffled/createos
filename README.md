@@ -2,10 +2,19 @@
 
 A live coding environment for creating audiovisual experiences in the browser — shaders, synthesizers, video, and computer vision, all from a single JavaScript editor.
 
+## Project Principles
+
+* Reactivity
+* Automation
+* Flexibility and Connectedness
+* Customizability
+
 ## What you can make
 
 - **GPU shaders** — full-screen WebGPU/WGSL fragment shaders with `time`, `uv`, `mouse`, and custom uniforms
 - **Audio synthesis** — synths, sequencers, effects chains via [Tone.js](https://tonejs.github.io/)
+- **Mic triggers** — react to sound level with `audio.level` (0–1 RMS) and `audio.onLevel(threshold, fn)`
+- **Voice & TTS** — recognize spoken words with `audio.onWord()` / `audio.onSpeech()`, speak with `audio.say()`
 - **Media layers** — image and video overlaid on the canvas with z-ordering
 - **Camera + vision** — react to hand gestures, facial expressions, and detected objects via [MediaPipe](https://github.com/google-ai-edge/mediapipe)
 - **2D canvas** — draw on z-indexed layers with CSS filter effects (blur, hue, brightness, etc.)
@@ -49,6 +58,19 @@ const stream = await cam.open(); // CameraStream — stream.element is a <video>
 // Media
 const vid = Media.video('https://example.com/clip.mp4');
 vid.play();
+
+// Mic level trigger (enable mic in toolbar first)
+audio.onLevel(0.7, () => draw.bg('red'), () => draw.bg('black'));
+setInterval(() => console.log(audio.level.toFixed(3)), 100); // live 0–1 RMS
+
+// Voice recognition (Chrome/Edge — Web Speech API)
+audio.onWord('red', () => draw.bg('red'));
+audio.onSpeech((text) => draw.text(text, 50, 50));
+
+// Text to speech
+audio.say('hello world');
+audio.say('slow and low', { voice: 'Samantha', rate: 0.6, pitch: 0.8 });
+console.log(audio.voices()); // list available voice names
 
 // Vision
 vision.onGesture('Thumb_Up', () => { /* ... */ });

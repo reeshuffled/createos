@@ -7,7 +7,7 @@ export function cleanupShaders() {
 
 // Track mouse in canvas-space for shader uniforms (module-level, persists across runs)
 document.addEventListener("mousemove", (e) => {
-  const w = document.getElementById("canvasWrapper");
+  const w = window.__ar_canvasWrapper ?? document.getElementById("canvasWrapper");
   if (!w) return;
   const r = w.getBoundingClientRect();
   const ref = w.querySelector("canvas");
@@ -140,8 +140,8 @@ export class Shader {
     // Create canvas overlaid on the scene — parented to fsContainer so it
     // fills the full WM output window regardless of canvasWrapper's 16:9 constraint.
     this._canvas = document.createElement("canvas");
-    const fsContainer = document.getElementById("fsContainer");
-    const wrapper = document.getElementById("canvasWrapper");
+    const fsContainer = window.__ar_fsContainer ?? document.getElementById("fsContainer");
+    const wrapper = window.__ar_canvasWrapper ?? document.getElementById("canvasWrapper");
     const parent = fsContainer ?? wrapper;
     const ref = wrapper?.querySelector("canvas");
     this._canvas.width = ref?.width ?? 1600;

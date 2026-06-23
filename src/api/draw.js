@@ -2,17 +2,19 @@ const _targets = new Map();
 
 class DrawTarget {
   #z;
+  #gc;
 
-  constructor(z) {
+  constructor(z, getLayerCanvas) {
     this.#z = z;
+    this.#gc = getLayerCanvas ?? ((z) => window.__ar_getLayerCanvas(z));
   }
 
   #ctx() {
-    return window.__ar_getLayerCanvas(this.#z).getContext("2d");
+    return this.#gc(this.#z).getContext("2d");
   }
 
-  get width()  { return window.__ar_getLayerCanvas(this.#z).width; }
-  get height() { return window.__ar_getLayerCanvas(this.#z).height; }
+  get width()  { return this.#gc(this.#z).width; }
+  get height() { return this.#gc(this.#z).height; }
 
   // ── Background / clear ────────────────────────────────────────────────────
 
@@ -176,14 +178,17 @@ class DrawTarget {
 
   // ── Layer targeting ───────────────────────────────────────────────────────
 
-  at(z) { return getDraw(z); }
+  at(z) { return new DrawTarget(z, this.#gc); }
 }
 
-export function getDraw(z = 0) {
-  if (_targets.has(z)) return _targets.get(z);
-  const t = new DrawTarget(z);
-  _targets.set(z, t);
-  return t;
+export function getDraw(z = 0, getLayerCanvas = null) {
+  if (!getLayerCanvas) {
+    if (_targets.has(z)) return _targets.get(z);
+    const t = new DrawTarget(z, null);
+    _targets.set(z, t);
+    return t;
+  }
+  return new DrawTarget(z, getLayerCanvas);
 }
 
 export function cleanupDraw() {

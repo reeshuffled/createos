@@ -816,6 +816,36 @@ audio.start();`,
         code: "const mic = await audio.mic();\nconst fft = audio.analyser(2048);\nmic.connect(fft);\n\nsetInterval(() => {\n  const bins = fft.getValue(); // Float32Array of dB\n  const sampleRate = 44100;\n  let maxI = 0;\n  for (let i = 1; i < bins.length; i++) if (bins[i] > bins[maxI]) maxI = i;\n  const hz = (maxI / bins.length) * (sampleRate / 2);\n  if (hz > 50 && hz < 2000) console.log(hz.toFixed(0) + ' Hz');\n}, 100);",
         hint: "Rough pitch detection from mic FFT — finds peak bin frequency. Works for clear tones, not polyphonic material.",
       },
+      {
+        label: "mic level (float)",
+        code: "// audio.level → 0–1 RMS amplitude. Enable mic in toolbar first.\nsetInterval(() => {\n  console.log(audio.level.toFixed(3));\n}, 100);",
+        hint: "audio.level — live mic amplitude 0–1 (RMS). Enable mic in toolbar. Poll or use audio.onLevel() for triggers.",
+      },
+      {
+        label: "mic level trigger",
+        code: "audio.onLevel(0.6, () => {\n  draw.bg('red'); // loud\n}, () => {\n  draw.bg('black'); // quiet\n});",
+        hint: "audio.onLevel(threshold, onEnter, onExit?) — edge-triggered when mic amplitude crosses threshold (0–1). Enable mic in toolbar.",
+      },
+      {
+        label: "voice command",
+        code: "audio.onWord('red', () => draw.bg('red'));\naudio.onWord('blue', () => draw.bg('blue'));\naudio.onWord('clear', () => draw.clear());",
+        hint: "audio.onWord(word, fn) — fires when that word is spoken. Uses Web Speech API (Chrome/Edge). Mic must be enabled.",
+      },
+      {
+        label: "speech transcript",
+        code: "audio.onSpeech((text) => {\n  console.log('heard:', text);\n  draw.text(text, 50, 50, { size: 24, color: 'white' });\n});",
+        hint: "audio.onSpeech(fn) — fires with full transcript string on every recognized utterance.",
+      },
+      {
+        label: "text to speech",
+        code: "audio.say('hello world');",
+        hint: "audio.say(text, opts?) — speak text via browser TTS. opts: { voice, rate (0.1–10), pitch (0–2), volume (0–1), lang }",
+      },
+      {
+        label: "TTS with options",
+        code: "// List available voices:\nconsole.log(audio.voices());\n\naudio.say('hello', { voice: 'Samantha', rate: 0.8, pitch: 1.2, volume: 1 });",
+        hint: "audio.voices() → array of voice name strings. Pass a name as opts.voice to audio.say().",
+      },
     ],
   },
   {

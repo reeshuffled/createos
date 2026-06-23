@@ -50,6 +50,7 @@ export function initMic() {
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 128;
       audioCtx.createMediaStreamSource(currentStream).connect(analyser);
+      window.__ar_mic_analyser = analyser;
     }
     if (audioCtx.state === "suspended") audioCtx.resume();
     const micWin = document.getElementById("win-mic");
