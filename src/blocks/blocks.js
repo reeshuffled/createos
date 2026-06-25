@@ -1287,6 +1287,80 @@ Blockly.defineBlocksWithJsonArray([
     colour: 120,
     tooltip: 'Run code when any typed key is pressed/released — enter the key character (a, z, 1, Enter, ArrowUp…)',
   },
+
+  // ── Three.js 3D ────────────────────────────────────────────────────────────
+  {
+    type: 'three_scene',
+    message0: '3D scene z=%1',
+    args0: [{ type: 'field_number', name: 'Z', value: 30 }],
+    output: null,
+    colour: 195,
+    tooltip: 'Create a ThreeScene (WebGL 3D). Connect to "start 3D scene" to begin rendering.',
+  },
+  {
+    type: 'three_start',
+    message0: 'start 3D scene %1',
+    args0: [{ type: 'input_value', name: 'SCENE' }],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 195,
+    tooltip: 'Begin rendering a ThreeScene',
+  },
+  {
+    type: 'three_tick',
+    message0: '3D tick scene %1 dt=%2',
+    args0: [
+      { type: 'input_value', name: 'SCENE' },
+      { type: 'field_variable', name: 'DT', variable: 'dt' },
+    ],
+    message1: 'do %1',
+    args1: [{ type: 'input_statement', name: 'DO' }],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 195,
+    tooltip: 'Register a per-frame callback on the ThreeScene. dt = delta time in seconds.',
+  },
+  {
+    type: 'three_box_mesh',
+    message0: 'box mesh color %1',
+    args0: [{ type: 'field_colour', name: 'COLOR', colour: '#4444ff' }],
+    output: null,
+    colour: 195,
+    tooltip: 'Create a THREE.Mesh with BoxGeometry and MeshNormalMaterial',
+  },
+  {
+    type: 'three_add',
+    message0: 'add %1 to scene %2',
+    args0: [
+      { type: 'input_value', name: 'OBJ' },
+      { type: 'input_value', name: 'SCENE' },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 195,
+    tooltip: 'Add a THREE.Object3D to a ThreeScene',
+  },
+  {
+    type: 'three_rotate',
+    message0: 'rotate %1 x+=%2 y+=%3',
+    args0: [
+      { type: 'input_value', name: 'OBJ' },
+      { type: 'field_number', name: 'DX', value: 0.01 },
+      { type: 'field_number', name: 'DY', value: 0.01 },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 195,
+    tooltip: 'Increment mesh rotation.x and rotation.y each frame',
+  },
+  {
+    type: 'three_signal_graph',
+    message0: 'show signal graph',
+    previousStatement: null,
+    nextStatement: null,
+    colour: 160,
+    tooltip: 'Open a window showing the live signal routing graph (sources → sinks)',
+  },
 ]);
 
 // ── Code generators ──────────────────────────────────────────────────────────
@@ -1731,6 +1805,34 @@ javascriptGenerator.forBlock['ctrl_onkey_char'] = (b, g) => {
   return `sensors.keyboard().onKey(${key}, () => {\n${down}}${upArg});\n`;
 };
 
+// Three.js 3D
+javascriptGenerator.forBlock['three_scene'] = (b) =>
+  [`new ThreeScene({ z: ${b.getFieldValue('Z')} })`, Order.NEW];
+javascriptGenerator.forBlock['three_start'] = (b, g) => {
+  const s = g.valueToCode(b, 'SCENE', Order.NONE) || 'null';
+  return `(${s}).start();\n`;
+};
+javascriptGenerator.forBlock['three_tick'] = (b, g) => {
+  const s = g.valueToCode(b, 'SCENE', Order.NONE) || 'null';
+  const dt = b.getFieldValue('DT') || 'dt';
+  const body = g.statementToCode(b, 'DO');
+  return `(${s}).tick((${dt}) => {\n${body}});\n`;
+};
+javascriptGenerator.forBlock['three_box_mesh'] = (b) => {
+  const color = b.getFieldValue('COLOR').replace('#', '0x');
+  return [`new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshNormalMaterial({ color: ${color} }))`, Order.NEW];
+};
+javascriptGenerator.forBlock['three_add'] = (b, g) => {
+  const obj = g.valueToCode(b, 'OBJ', Order.NONE) || 'null';
+  const s = g.valueToCode(b, 'SCENE', Order.NONE) || 'null';
+  return `(${s}).add(${obj});\n`;
+};
+javascriptGenerator.forBlock['three_rotate'] = (b, g) => {
+  const obj = g.valueToCode(b, 'OBJ', Order.NONE) || 'null';
+  return `(${obj}).rotation.x += ${b.getFieldValue('DX')};\n(${obj}).rotation.y += ${b.getFieldValue('DY')};\n`;
+};
+javascriptGenerator.forBlock['three_signal_graph'] = () => `signalGraph.show();\n`;
+
 // ── Pipeline blocks ──────────────────────────────────────────────────────────
 
 Blockly.defineBlocksWithJsonArray([
@@ -1801,6 +1903,85 @@ Blockly.defineBlocksWithJsonArray([
     colour: 80,
     tooltip: 'Camera → pixelate mosaic → window pipeline.',
   },
+
+  // ── ASCII Animation ─────────────────────────────────────────────────────────
+  {
+    type: 'ascii_play',
+    message0: 'ASCII play frame1 %1 frame2 %2 fps %3',
+    args0: [
+      { type: 'field_input', name: 'F1', text: ' .oO0 ' },
+      { type: 'field_input', name: 'F2', text: ' 0Oo. ' },
+      { type: 'field_number', name: 'FPS', value: 8, min: 1 },
+    ],
+    output: null,
+    colour: 55,
+    tooltip: 'Create ASCII animation player from two frames',
+  },
+  {
+    type: 'ascii_show',
+    message0: 'show ASCII anim %1 title %2',
+    args0: [
+      { type: 'input_value', name: 'ANIM' },
+      { type: 'field_input', name: 'TITLE', text: 'ASCII' },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 55,
+    tooltip: 'Open an ASCII animation in a wm window',
+  },
+
+  // ── Sprite ──────────────────────────────────────────────────────────────────
+  {
+    type: 'sprite_create',
+    message0: 'sprite %1×%2 scale %3 frames %4',
+    args0: [
+      { type: 'field_number', name: 'W', value: 8, min: 1 },
+      { type: 'field_number', name: 'H', value: 8, min: 1 },
+      { type: 'field_number', name: 'SCALE', value: 16, min: 1 },
+      { type: 'field_number', name: 'FRAMES', value: 1, min: 1 },
+    ],
+    output: null,
+    colour: 55,
+    tooltip: 'Create a Sprite (pixel-grid animation)',
+  },
+  {
+    type: 'sprite_pixel',
+    message0: 'sprite %1 pixel x=%2 y=%3 color %4',
+    args0: [
+      { type: 'input_value', name: 'SP' },
+      { type: 'field_number', name: 'X', value: 0 },
+      { type: 'field_number', name: 'Y', value: 0 },
+      { type: 'field_colour', name: 'COLOR', colour: '#ff0000' },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 55,
+    tooltip: 'Set a pixel on the current frame',
+  },
+  {
+    type: 'sprite_play',
+    message0: 'sprite %1 play fps %2',
+    args0: [
+      { type: 'input_value', name: 'SP' },
+      { type: 'field_number', name: 'FPS', value: 8, min: 1 },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 55,
+    tooltip: 'Start animating the sprite at fps',
+  },
+  {
+    type: 'sprite_show',
+    message0: 'sprite %1 show title %2',
+    args0: [
+      { type: 'input_value', name: 'SP' },
+      { type: 'field_input', name: 'TITLE', text: 'Sprite' },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 55,
+    tooltip: 'Open sprite in a wm window',
+  },
 ]);
 
 javascriptGenerator.forBlock['pipe_ascii_camera'] = (b) => {
@@ -1842,6 +2023,45 @@ javascriptGenerator.forBlock['pipe_pixelate_camera'] = (b) => {
   const w     = b.getFieldValue('W');
   const h     = b.getFieldValue('H');
   return `const _cam${idx} = await Camera.open({ index: ${idx} });\npipe(_cam${idx}).pixelate({ blockSize: ${block} }).show(${title}, { w: ${w}, h: ${h} });\n`;
+};
+
+// ASCII Animation
+javascriptGenerator.forBlock['ascii_play'] = (b) => {
+  const f1  = JSON.stringify(b.getFieldValue('F1'));
+  const f2  = JSON.stringify(b.getFieldValue('F2'));
+  const fps = b.getFieldValue('FPS');
+  return [`ascii.play([${f1}, ${f2}], ${fps})`, Order.FUNCTION_CALL];
+};
+javascriptGenerator.forBlock['ascii_show'] = (b, g) => {
+  const anim  = g.valueToCode(b, 'ANIM', Order.NONE) || 'null';
+  const title = JSON.stringify(b.getFieldValue('TITLE'));
+  return `const _aw = wm.spawn(${title}, { w: 400, h: 280 });\n_aw?.querySelector('.wm-body')?.appendChild((${anim}).el);\n`;
+};
+
+// Sprite / Mosaic
+javascriptGenerator.forBlock['sprite_create'] = (b) => {
+  const w = b.getFieldValue('W');
+  const h = b.getFieldValue('H');
+  const sc = b.getFieldValue('SCALE');
+  const fr = b.getFieldValue('FRAMES');
+  return [`new Sprite({ width: ${w}, height: ${h}, scale: ${sc}, frames: ${fr} })`, Order.NEW];
+};
+javascriptGenerator.forBlock['sprite_pixel'] = (b, g) => {
+  const sp = g.valueToCode(b, 'SP', Order.NONE) || 'null';
+  const x = b.getFieldValue('X');
+  const y = b.getFieldValue('Y');
+  const color = JSON.stringify(b.getFieldValue('COLOR'));
+  return `(${sp}).pixel(${x}, ${y}, ${color});\n`;
+};
+javascriptGenerator.forBlock['sprite_play'] = (b, g) => {
+  const sp  = g.valueToCode(b, 'SP', Order.NONE) || 'null';
+  const fps = b.getFieldValue('FPS');
+  return `(${sp}).play(${fps});\n`;
+};
+javascriptGenerator.forBlock['sprite_show'] = (b, g) => {
+  const sp    = g.valueToCode(b, 'SP', Order.NONE) || 'null';
+  const title = JSON.stringify(b.getFieldValue('TITLE'));
+  return `(${sp}).show(${title});\n`;
 };
 
 // ── Toolbox ──────────────────────────────────────────────────────────────────
@@ -2097,6 +2317,35 @@ export const TOOLBOX = {
         },
         { kind: 'block', type: 'wm_pick_file' },
         { kind: 'block', type: 'wm_browse' },
+      ],
+    },
+    {
+      kind: 'category', name: 'ASCII / Sprite', colour: 55,
+      contents: [
+        {
+          kind: 'block', type: 'ascii_show',
+          inputs: { ANIM: { block: { type: 'ascii_play' } } },
+        },
+        { kind: 'block', type: 'ascii_play' },
+        { kind: 'block', type: 'sprite_create' },
+        { kind: 'block', type: 'sprite_pixel' },
+        { kind: 'block', type: 'sprite_play' },
+        { kind: 'block', type: 'sprite_show' },
+      ],
+    },
+    {
+      kind: 'category', name: 'Three.js 3D', colour: 195,
+      contents: [
+        {
+          kind: 'block', type: 'three_start',
+          inputs: { SCENE: { block: { type: 'three_scene' } } },
+        },
+        { kind: 'block', type: 'three_scene' },
+        { kind: 'block', type: 'three_tick' },
+        { kind: 'block', type: 'three_box_mesh' },
+        { kind: 'block', type: 'three_add' },
+        { kind: 'block', type: 'three_rotate' },
+        { kind: 'block', type: 'three_signal_graph' },
       ],
     },
   ],

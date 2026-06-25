@@ -48,6 +48,15 @@ describe('detectAPIUsage — API presence', () => {
     expect(r.usesDraw).toBe(true);
     expect(r.usesSensors).toBe(true);
   });
+  test('detects ThreeScene construction', () => {
+    expect(detectAPIUsage('const s = new ThreeScene();').usesThree).toBe(true);
+  });
+  test('detects THREE namespace usage', () => {
+    expect(detectAPIUsage('const g = new THREE.BoxGeometry();').usesThree).toBe(true);
+  });
+  test('no usesThree when not present', () => {
+    expect(detectAPIUsage('draw.circle(100,100,50)').usesThree).toBe(false);
+  });
 });
 
 // ── Shader start detection (feeds #12 smart output detection) ─────────────────

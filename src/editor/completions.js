@@ -132,6 +132,12 @@ export const TOOLKIT_CATEGORIES = [
         code: "layer.fit('contain'); // 'cover', 'contain', or 'stretch'",
         hint: "Change how image fills the canvas",
       },
+      {
+        label: "video clip (time range)",
+        code: "// Clip a video to a specific time range\nconst clip = Media.clip('https://example.com/long.mp4', 10, 20);\nclip.loop(true).play();\n// clip.el is the underlying <video> element\nconst win = wm.spawn('Clip', { type: 'video', src: '' });\n// Or use clip.el directly",
+        hint: "Media.clip(source, start, end) — wraps a video URL or element to play only [start, end] seconds. .play()/.pause()/.stop()/.seek(offset)/.loop(bool)/.mute(bool). .currentTime and .duration are clamp-relative.",
+        tags: ["video", "clip", "trim", "range"],
+      },
     ],
   },
   {
@@ -1396,6 +1402,283 @@ audio.start();`,
         label: "GLShader + PIXI layer",
         code: "// GLShader full-screen (WebGL), PIXI sprites on top\nconst s = new GLShader(GLSL_PRESETS.plasma);\ns.start();\n\nconst label = new PIXI.Text('GLSL + PIXI', new PIXI.TextStyle({\n  fontSize: 64, fill: '#fff', fontWeight: 'bold',\n  dropShadow: true, dropShadowDistance: 6,\n}));\nlabel.anchor.set(0.5);\nlabel.x = pixi.screen.width / 2;\nlabel.y = pixi.screen.height / 2;\nStage.addChild(label);\n\npixi.tick(t => { label.rotation = Math.sin(pixi.ticker.lastTime / 1000) * 0.2; });",
         hint: "GLShader (z=30) + PIXI (z=25) layer cleanly. Use GLShader for full-screen procedural backgrounds, PIXI for text/sprites/interactions on top.",
+      },
+    ],
+  },
+  {
+    name: "Three.js 3D",
+    commands: [
+      {
+        label: "spinning cube",
+        code: "const scene3 = new ThreeScene();\nconst geo  = new THREE.BoxGeometry();\nconst mat  = new THREE.MeshNormalMaterial();\nconst cube = new THREE.Mesh(geo, mat);\nscene3.add(cube);\nscene3.tick((dt) => { cube.rotation.x += dt; cube.rotation.y += dt * 0.7; });\nscene3.start();",
+        hint: "ThreeScene — WebGL 3D. THREE namespace is the full three.js object. tick(fn(dt, elapsed)) runs each frame. start() begins the render loop.",
+        tags: ["three", "3d", "cube", "mesh"],
+      },
+      {
+        label: "audio-reactive geometry",
+        code: "const scene3 = new ThreeScene();\nconst geo = new THREE.IcosahedronGeometry(1.5, 1);\nconst mat = new THREE.MeshNormalMaterial({ wireframe: true });\nconst mesh = new THREE.Mesh(geo, mat);\nscene3.add(mesh);\n\nscene3.bind('bass', () => audio.fft.bass);\nscene3.tick((dt, t) => {\n  const b = scene3.get('bass');\n  mesh.scale.setScalar(1 + b * 2);\n  mesh.rotation.y += dt * 0.5;\n});\nscene3.start();",
+        hint: "scene3.bind(name, fn) registers a live signal. scene3.get(name) reads it each frame. Wire audio.fft, sensors.mouse().x, etc.",
+        tags: ["three", "3d", "audio", "reactive", "icosahedron"],
+      },
+      {
+        label: "point cloud",
+        code: "const scene3 = new ThreeScene({ alpha: true });\nconst N = 2000;\nconst positions = new Float32Array(N * 3);\nfor (let i = 0; i < N * 3; i++) positions[i] = (Math.random() - 0.5) * 8;\nconst geo = new THREE.BufferGeometry();\ngeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));\nconst mat = new THREE.PointsMaterial({ color: 0x00ffcc, size: 0.05 });\nconst pts = new THREE.Points(geo, mat);\nscene3.add(pts);\nscene3.tick(dt => { pts.rotation.y += dt * 0.1; });\nscene3.start();",
+        hint: "THREE.Points — scatter 3D point cloud. BufferGeometry with position attribute. PointsMaterial controls size/color.",
+        tags: ["three", "3d", "particles", "points", "cloud"],
+      },
+      {
+        label: "SDF raymarch shader",
+        code: "// TSL (Three.js Shading Language) — WebGPU required (Chrome 113+)\n// Falls back to THREE standard materials on WebGL\nconst scene3 = new ThreeScene();\nconst geo = new THREE.PlaneGeometry(4, 4);\nconst mat = new THREE.MeshNormalMaterial();\nconst mesh = new THREE.Mesh(geo, mat);\nscene3.add(mesh);\nscene3.tick((dt, t) => { mesh.rotation.z += dt * 0.2; });\nscene3.start();\n// For full TSL raymarching: use THREE.MeshBasicNodeMaterial (WebGPU renderer)",
+        hint: "Three.js TSL (node materials) runs on WebGPU (Chrome 113+). For cross-browser SDF effects, combine GLShader + ThreeScene as layers.",
+        tags: ["three", "3d", "tsl", "sdf", "raymarch", "webgpu"],
+      },
+      {
+        label: "scene opacity / z-order",
+        code: "const scene3 = new ThreeScene({ z: 35 });\n// ... add geometry ...\nscene3.start();\nscene3.opacity(0.8); // 0–1\nscene3.z(40);        // css z-index",
+        hint: "ThreeScene({ z }) sets CSS z-index of the renderer canvas. .opacity(v) fades the whole scene. Layer 3D above or below draw/shaders.",
+        tags: ["three", "3d", "layer", "z-index", "opacity"],
+      },
+      {
+        label: "scene.resize(w, h)",
+        code: "const scene3 = new ThreeScene({ width: 400, height: 400 });\n// ... mesh ...\nscene3.start();\n// resize later:\nscene3.resize(800, 600); // updates renderer + camera aspect",
+        hint: "ThreeScene({ width, height }) sets initial size. .resize(w, h) updates renderer size and camera aspect ratio.",
+        tags: ["three", "3d", "resize"],
+      },
+    ],
+  },
+  {
+    name: "ASCII Animation",
+    commands: [
+      {
+        label: "play ASCII frames",
+        code: "const frames = [\n  '  o  \\n /|\\\\  \\n / \\\\ ',\n  '  o  \\n -|-  \\n / \\\\ ',\n];\nconst anim = ascii.play(frames, 8, { color: '#0f0', bg: '#000' });\nconst win = wm.spawn('ASCII Anim', { w: 300, h: 200 });\nwin.querySelector('.wm-body')?.appendChild(anim.el);",
+        hint: "ascii.play(frames, fps, opts) — plays an array of ASCII strings at fps. Returns {el, stop, start, loop, frame, fps}. Attach el to a wm window body.",
+        tags: ["ascii", "animation", "text", "art"],
+      },
+      {
+        label: "record ASCII from canvas",
+        code: "// Capture ASCII frames from the current canvas for 2 seconds\nconst frames = await ascii.record(getCanvas(0), { fps: 12, duration: 2, cols: 60 });\nconsole.log('captured', frames.length, 'frames');\nconst anim = ascii.play(frames, 12);\nconst win = wm.spawn('Replay', { w: 400, h: 300 });\nwin.querySelector('.wm-body')?.appendChild(anim.el);",
+        hint: "ascii.record(source, opts) — captures ASCII frames from a canvas source over `duration` seconds. source: HTMLCanvasElement, GLShader, ThreeScene, or any object with .canvas.",
+        tags: ["ascii", "record", "capture", "animation"],
+      },
+      {
+        label: "loop / stop / frame control",
+        code: "const anim = ascii.play(frames, 12);\nanim.loop(false);     // don't loop — stop at last frame\nanim.stop();          // stop playback\nanim.start();         // resume\nanim.frame(0);        // jump to frame 0\nanim.fps(24);         // change speed",
+        hint: "AsciiPlayer controls: .loop(bool), .stop(), .start(), .frame(n), .fps(n)",
+        tags: ["ascii", "animation", "control"],
+      },
+    ],
+  },
+  {
+    name: "Sprite / Mosaic",
+    commands: [
+      {
+        label: "pixel-art sprite",
+        code: "const sp = new Sprite({ width: 8, height: 8, scale: 16, frames: 2 });\n// Frame 0 — standing\nsp.frame(0);\nsp.fill(3, 0, 2, 2, '#f90'); // head\nsp.fill(3, 2, 2, 4, '#00f'); // body\n// Frame 1 — arms up\nsp.frame(1);\nsp.fill(3, 0, 2, 2, '#f90');\nsp.fill(2, 2, 4, 4, '#00f');\n// Animate\nsp.frame(0).play(6);\nsp.show('Sprite');",
+        hint: "Sprite({ width, height, scale, frames }) — pixel-grid animation. .pixel(x,y,color) sets one pixel. .fill(x,y,w,h,color) fills a rect. .play(fps) animates. .show(title) opens in a wm window.",
+        tags: ["sprite", "pixel", "art", "animation", "mosaic"],
+      },
+      {
+        label: "mosaic / paint single frame",
+        code: "const sp = new Sprite({ width: 16, height: 16, scale: 10 });\n// Draw with raw 2d context\nconst ctx = sp.ctx(); // 16×16 2d context\nctx.fillStyle = '#ff0';\nctx.fillRect(4, 4, 8, 8);\nctx.fillStyle = '#f00';\nctx.fillRect(6, 6, 4, 4);\nsp._render(); // push to display canvas\nsp.show('Mosaic');",
+        hint: "sp.ctx(frameIndex?) returns the raw 2d context at pixel resolution. After drawing call sp._render() to update display. Good for mosaic/pixel-art effects.",
+        tags: ["sprite", "mosaic", "pixel", "canvas", "2d"],
+      },
+      {
+        label: "onion skin",
+        code: "const sp = new Sprite({ width: 12, height: 12, scale: 12, frames: 3 });\nsp.onionSkin(0.25); // show prev frame at 25% opacity\n// draw frames...\nsp.play(4);\nsp.show('Onion');",
+        hint: "sp.onionSkin(alpha) — shows the previous frame semi-transparently while editing. Classic animation aid.",
+        tags: ["sprite", "onion", "skin", "animation"],
+      },
+      {
+        label: "addFrame + loop",
+        code: "const sp = new Sprite({ width: 8, height: 8, scale: 16, bg: '#111' });\nfor (let i = 0; i < 4; i++) {\n  const fi = i === 0 ? 0 : sp.addFrame();\n  sp.frame(fi);\n  sp.fill(i * 2, 0, 2, 8, `hsl(${i*90},80%,60%)`);\n}\nsp.play(8);\nsp.show('Loop');",
+        hint: "sp.addFrame() adds a blank frame and returns its index. sp.frame(n) switches drawing target.",
+        tags: ["sprite", "frames", "loop", "animation"],
+      },
+    ],
+  },
+  {
+    name: "Desktop Shell",
+    commands: [
+      {
+        label: "environment detection",
+        code: "console.log('isDesktop:', shell.isDesktop, 'isElectron:', shell.isElectron, 'isTauri:', shell.isTauri, 'isBrowser:', shell.isBrowser);",
+        hint: "shell.isDesktop / .isElectron / .isTauri / .isBrowser — detect runtime environment. Always safe to call; returns false in browser.",
+        tags: ["shell", "electron", "tauri", "desktop", "detect"],
+      },
+      {
+        label: "status bar text",
+        code: "shell.status('Audio: ' + Math.round(audio.fft.bass * 100) + '%');\n// clear when done\n// shell.clearStatus();",
+        hint: "shell.status(text) — set native status bar text in Electron/Tauri desktop shell. No-op in browser. .clearStatus() clears it.",
+        tags: ["shell", "status", "statusbar", "desktop"],
+      },
+      {
+        label: "save file (native)",
+        code: "const canvas = getCanvas(0);\ncanvas.toBlob(async blob => {\n  const buf = await blob.arrayBuffer();\n  await shell.saveFile(buf, { defaultPath: 'export.png', filters: [{ name: 'PNG', extensions: ['png'] }] });\n});",
+        hint: "shell.saveFile(data, opts) — native save dialog in Electron/Tauri. Falls back to browser download in static-site mode.",
+        tags: ["shell", "save", "file", "export", "download"],
+      },
+      {
+        label: "set window title",
+        code: "shell.setTitle('My Visual Synth — Live');",
+        hint: "shell.setTitle(text) — set native window title in Electron/Tauri. Falls back to document.title in browser.",
+        tags: ["shell", "title", "window", "desktop"],
+      },
+    ],
+  },
+  {
+    name: "MIDI",
+    commands: [
+      {
+        label: "open MIDI + monitor",
+        code: "await midi.open();\nconsole.log('MIDI inputs:', midi.inputs().map(i => i.name));\nmidi.spawn('MIDI Monitor');",
+        hint: "midi.open() → Promise. Requests Web MIDI access. midi.inputs() → array of {id, name, manufacturer, state}. midi.spawn(title) opens a live event monitor window.",
+        tags: ["midi", "music", "input", "monitor"],
+      },
+      {
+        label: "note on/off handler",
+        code: "await midi.open();\nmidi.onNote(({ type, note, velocity, channel }) => {\n  console.log(type, note, velocity, 'ch', channel);\n  if (type === 'noteon') draw.circle(note * 6, 300, velocity, `hsl(${note*3},80%,60%)`);\n});",
+        hint: "midi.onNote(fn) — fn({type:'noteon'|'noteoff', note, velocity, channel}). Called for every note event on any channel.",
+        tags: ["midi", "note", "noteon", "noteoff"],
+      },
+      {
+        label: "CC signal (knob/fader)",
+        code: "await midi.open();\nconst vol = midi.signal(0, 7);  // ch 0, CC 7 = volume\nsetInterval(() => {\n  draw.clear();\n  draw.rect(100, 100, vol.value * 400, 40, '#0f0');\n}, 30);",
+        hint: "midi.signal(channel, cc) → {value} — live 0–1 signal updated on each CC message. Use as shader .bind() source or animation driver.",
+        tags: ["midi", "cc", "knob", "signal", "fader"],
+      },
+      {
+        label: "CC change handler",
+        code: "await midi.open();\nmidi.onCC(0, 1, value => {\n  console.log('mod wheel:', value.toFixed(2));\n});",
+        hint: "midi.onCC(channel, cc, fn) — fn(value 0–1) fires when matching CC changes.",
+        tags: ["midi", "cc", "handler"],
+      },
+    ],
+  },
+  {
+    name: "External Data",
+    commands: [
+      {
+        label: "weather signal",
+        code: "const w = await external.weather(37.7749, -122.4194);  // San Francisco\nconsole.log('temp:', w.temperature, '°C  wind:', w.windSpeed, 'km/h');\n\n// drive a shader with temperature\nnew GLShader(GLSL_PRESETS.plasma).set(0, w.temperature / 40).start();",
+        hint: "external.weather(lat, lon) → WeatherSignal with .temperature, .windSpeed, .precipitation, .humidity. Powered by open-meteo (no API key). .stream(fn, intervalMs) polls for updates.",
+        tags: ["external", "weather", "data", "signal", "open-meteo"],
+      },
+      {
+        label: "live weather stream",
+        code: "const w = await external.weather(51.5074, -0.1278);  // London\nw.stream(sig => {\n  const t = sig.temperature ?? 0;\n  draw.clear();\n  draw.text(`🌡 ${t.toFixed(1)}°C  💨 ${(sig.windSpeed??0).toFixed(0)} km/h`, 40, 200, { size: 36, color: t > 20 ? '#f80' : '#0af' });\n}, 60000);",
+        hint: "WeatherSignal.stream(fn, intervalMs=60000) — calls fn(signal) immediately, then every intervalMs. Refreshes from open-meteo API.",
+        tags: ["external", "weather", "stream", "live"],
+      },
+      {
+        label: "generic JSON signal",
+        code: "// Poll any JSON endpoint as a live signal\nconst price = await external.signal(\n  'https://api.coinbase.com/v2/prices/BTC-USD/spot',\n  json => parseFloat(json.data.amount)\n);\nconsole.log('BTC:', price.value);\n\nprice.stream(s => draw.text('$' + s.value.toFixed(2), 50, 300, { size: 40, color: '#f80' }), 10000);",
+        hint: "external.signal(url, selector, intervalMs) → DataSignal with .value. selector(json) extracts the value from the response.",
+        tags: ["external", "fetch", "json", "signal", "poll"],
+      },
+    ],
+  },
+  {
+    name: "Window Physics",
+    commands: [
+      {
+        label: "enable physics",
+        code: "wm.physics(true, { gravity: 0.3 });\n// Bounce all windows with gravity\nwm.push('win-editor', 4, -8);  // toss the editor window",
+        hint: "wm.physics(on, opts) — toggle window physics. opts: { gravity (px/frame²) }. wm.push(id, vx, vy) applies velocity impulse. AABB bounce off desktop edges with elasticity.",
+        tags: ["physics", "window", "bounce", "gravity"],
+      },
+      {
+        label: "push window",
+        code: "wm.physics(true);\n// Give all windows a random push\nconst ids = ['win-editor', 'win-canvas', 'win-console'];\nids.forEach(id => {\n  wm.push(id, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20);\n});",
+        hint: "wm.push(id, vx, vy) — applies velocity impulse to a window. Works even without physics(); physics() must be enabled for the motion to animate.",
+        tags: ["physics", "push", "impulse", "window"],
+      },
+      {
+        label: "gravity off",
+        code: "wm.gravity(0);   // kill gravity\n// or\nwm.physics(false); // stop physics entirely",
+        hint: "wm.gravity(g) — set gravity constant (px/frame²). 0 = zero gravity (float). wm.physics(false) stops the physics loop.",
+        tags: ["physics", "gravity", "stop"],
+      },
+    ],
+  },
+  {
+    name: "Status Bar",
+    commands: [
+      {
+        label: "status bar text",
+        code: "statusBar.set('Live — BPM: 120 | CPU: 12%');",
+        hint: "statusBar.set(text) — set status bar text. Spawns a slim borderless wm window at the bottom of the desktop on first call.",
+        tags: ["statusbar", "status", "hud", "widget"],
+      },
+      {
+        label: "status bar + widget",
+        code: "statusBar.set('Ready');\nstatusBar.add('<span style=\"color:#0f0;background:#002;padding:2px 6px;border-radius:3px;\">● LIVE</span>');\n\n// Update status periodically\nsetInterval(() => statusBar.set('BPM: 120 | ' + new Date().toLocaleTimeString()), 1000);",
+        hint: "statusBar.add(htmlString) — appends HTML widget to the right side of the status bar. statusBar.clear() removes all content. statusBar.hide()/show() toggle visibility.",
+        tags: ["statusbar", "widget", "add", "html"],
+      },
+    ],
+  },
+  {
+    name: "Haptics",
+    commands: [
+      {
+        label: "vibrate pulse",
+        code: "sensors.vibrate(200);  // 200ms vibration",
+        hint: "sensors.vibrate(pattern) — Vibration API wrapper. pattern: number (ms) or array [on,off,on,…]. Mobile devices + some controllers.",
+        tags: ["haptics", "vibrate", "sensor", "mobile"],
+      },
+      {
+        label: "haptics shortcuts",
+        code: "sensors.haptics.tap();\n// sensors.haptics.doubleTap();\n// sensors.haptics.buzz(500);\n// sensors.haptics.pulse(0.8);  // 0–1 intensity\n// sensors.haptics.stop();",
+        hint: "sensors.haptics — shorthand methods: .tap() 40ms, .doubleTap() [40,60,40], .buzz(ms), .pulse(intensity 0–1), .stop(). Ignored if Vibration API unavailable.",
+        tags: ["haptics", "tap", "buzz", "pulse", "mobile"],
+      },
+    ],
+  },
+  {
+    name: "Plugin iframes",
+    commands: [
+      {
+        label: "inline HTML plugin",
+        code: "const html = `<!DOCTYPE html><html><body style=\"background:#111;color:#0f0;font:20px monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0\">\n  <div id=\"out\">waiting…</div>\n</body></html>`;\n\nconst p = PluginHost.create(html);\np.on('greeting', msg => console.log('from plugin:', msg));\np.spawn('My Plugin', { w: 300, h: 200 });",
+        hint: "PluginHost.create(htmlString) — wraps HTML in a sandboxed blob iframe window. vlPlugin is injected: vlPlugin.send(type, val) to talk to host; vlPlugin.on(type, fn) to receive.",
+        tags: ["plugin", "iframe", "sandbox", "html"],
+      },
+      {
+        label: "signal bridge → plugin",
+        code: "const p = PluginHost.create(`<!DOCTYPE html><html><body style=\"background:#000;margin:0\">\n  <canvas id=\"c\" width=\"300\" height=\"200\"></canvas>\n  <script>\n    const ctx = document.getElementById('c').getContext('2d');\n    vlPlugin.on('bass', v => {\n      ctx.fillStyle = 'black';\n      ctx.fillRect(0, 0, 300, 200);\n      const r = v * 80 + 20;\n      ctx.fillStyle = '#0f0';\n      ctx.beginPath();\n      ctx.arc(150, 100, r, 0, Math.PI * 2);\n      ctx.fill();\n    });\n  <\\/script>\n</body></html>`);\n\np.bridge('bass', () => audio.fft.bass);\np.spawn('Audio-reactive Plugin', { w: 320, h: 240 });",
+        hint: "plugin.bridge(name, fn) — calls fn() each RAF and sends result to iframe as vlPlugin event. Use for pushing audio.fft, sensors.mouse(), etc. into plugin.",
+        tags: ["plugin", "bridge", "signal", "audio", "reactive"],
+      },
+      {
+        label: "load URL plugin",
+        code: "const p = PluginHost.load('https://example.com/plugin/');\np.on('output', val => console.log('plugin output:', val));\np.spawn('External Plugin', { w: 500, h: 400 });",
+        hint: "PluginHost.load(url) — loads an external URL in a sandboxed iframe window. Same API: p.send(), p.on(), p.bridge(). Cross-origin canvas sharing via vlPlugin.shareCanvas(canvas).",
+        tags: ["plugin", "iframe", "url", "external"],
+      },
+      {
+        label: "canvas from plugin",
+        code: "// Plugin shares its canvas with the host for use as a shader input\nconst html = `<!DOCTYPE html><html><body style=\"margin:0\">\n  <canvas id=\"c\" width=\"320\" height=\"240\"></canvas>\n  <script>\n    // ... draw to canvas ...\n    vlPlugin.shareCanvas(document.getElementById('c'));\n  <\\/script>\n</body></html>`;\n\nconst p = PluginHost.create(html);\np.spawn('Canvas Plugin', { w: 320, h: 240 });\n\n// After plugin loads, use its canvas as a GLShader input:\nsetTimeout(() => {\n  const canvas = p.canvas;\n  if (canvas) new GLShader(GLSL_PRESETS.gradient, { video: canvas }).start();\n}, 500);",
+        hint: "vlPlugin.shareCanvas(canvas) — plugin shares its canvas via ImageBitmap transfer each RAF. p.canvas on the host returns the mirror canvas, usable as GLShader/pipe video input.",
+        tags: ["plugin", "canvas", "shader", "input", "cross-origin"],
+      },
+    ],
+  },
+  {
+    name: "Signal Graph",
+    commands: [
+      {
+        label: "show signal graph",
+        code: "signalGraph.show();",
+        hint: "Opens a read-only window showing active signal sources, sinks, and routing connections. Live nodes appear as colored boxes with edges for registered routes.",
+        tags: ["signal", "graph", "routing", "debug", "visualize"],
+      },
+      {
+        label: "register route",
+        code: "signalGraph.route('audio.fft.bass', 'ThreeScene', 'bass→scale');\nsignalGraph.show();",
+        hint: "signalGraph.route(source, sink, label) manually registers a signal connection for the graph view. ThreeScene.bind() auto-registers.",
+        tags: ["signal", "graph", "route", "connect"],
       },
     ],
   },

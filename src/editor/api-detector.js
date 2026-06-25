@@ -32,6 +32,7 @@ const API_PATTERNS = {
   usesMedia:    /\bMedia\s*\./,
   usesDraw:     /\bdraw\s*\.(?!toASCII\b)/,
   usesLayer:    /\bgetLayer\s*\(/,
+  usesThree:    /\bnew\s+ThreeScene\b|\bTHREE\s*\./,
 };
 
 // ── AST-level precise detection ───────────────────────────────────────────────
@@ -120,6 +121,7 @@ export function detectAPIUsage(code) {
     usesMedia:    false,
     usesDraw:     false,
     usesLayer:    false,
+    usesThree:    false,
     shaderStartCalled:    false,
     shaderConstructedOnly: false,
     parseError:   null,

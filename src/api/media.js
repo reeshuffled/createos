@@ -184,6 +184,72 @@ class VideoLayer {
   }
 }
 
+// ── VideoClip ────────────────────────────────────────────────────────────────
+
+class VideoClip {
+  constructor(source, start, end) {
+    this._start = start;
+    this._end = end;
+    this._looping = false;
+    this._owned = false;
+
+    if (typeof source === 'string') {
+      this.el = document.createElement('video');
+      this.el.src = source;
+      this.el.playsInline = true;
+      this.el.muted = true;
+      this.el.style.display = 'none';
+      document.body.appendChild(this.el);
+      this._owned = true;
+    } else {
+      this.el = source;
+    }
+    this.el.currentTime = start;
+
+    this._onTime = () => {
+      if (this.el.currentTime >= this._end) {
+        if (this._looping) { this.el.currentTime = this._start; }
+        else { this.el.pause(); }
+      }
+    };
+    this.el.addEventListener('timeupdate', this._onTime);
+    _mediaLayers.push(this);
+  }
+
+  play() {
+    if (this.el.currentTime >= this._end || this.el.currentTime < this._start) {
+      this.el.currentTime = this._start;
+    }
+    this.el.play().catch(() => {});
+    return this;
+  }
+
+  pause() { this.el.pause(); return this; }
+
+  stop() {
+    this.el.pause();
+    this.el.currentTime = this._start;
+    return this;
+  }
+
+  seek(offsetSecs) {
+    this.el.currentTime = Math.max(this._start, Math.min(this._end, this._start + offsetSecs));
+    return this;
+  }
+
+  loop(on = true) { this._looping = on; return this; }
+  mute(on = true) { this.el.muted = on; return this; }
+
+  get currentTime() { return Math.max(0, this.el.currentTime - this._start); }
+  get duration()    { return this._end - this._start; }
+
+  _destroy() {
+    this.el.removeEventListener('timeupdate', this._onTime);
+    this.el.pause();
+    if (this._owned && this.el.parentNode) this.el.remove();
+  }
+}
+
 // ── Media namespace ──────────────────────────────────────────────────────────
 
 export const Media = {
@@ -207,5 +273,10 @@ export const Media = {
   // Create a video layer
   video(url, opts = {}) {
     return new VideoLayer(url, opts);
+  },
+
+  // Clip a video URL or element to a time range [start, end] seconds
+  clip(source, start = 0, end = Infinity) {
+    return new VideoClip(source, start, end);
   },
 };

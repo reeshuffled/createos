@@ -27,6 +27,14 @@ import { cleanupDesktop, addEditorIcon, removeEditorIcon, updateEditorIconLabel,
 import { cleanupCameras } from '../api/camera.js';
 import { cleanupCaptures } from './editor-capture.js';
 import { cleanupPipelines } from '../api/render-pipeline.js';
+import { cleanupThree } from '../api/three-scene.js';
+import { cleanupSignalGraph } from '../api/signal-graph.js';
+import { cleanupAscii } from '../api/ascii.js';
+import { cleanupSprites } from '../api/sprite.js';
+import { cleanupPlugins } from '../api/plugin-host.js';
+import { cleanupMidi } from '../api/midi.js';
+import { cleanupExternal } from '../api/external.js';
+import { cleanupStatusBar } from '../api/status-bar.js';
 import { stopVision } from '../api/vision.js';
 import { freezeTimers, restoreTimers } from '../runtime/timer-manager.js';
 import {
@@ -897,6 +905,14 @@ export class EditorInstance {
     cleanupMedia();
     cleanupVideoSignal();
     cleanupSensors();
+    cleanupThree();
+    cleanupSignalGraph();
+    cleanupAscii();
+    cleanupSprites();
+    cleanupPlugins();
+    cleanupMidi();
+    cleanupExternal();
+    cleanupStatusBar();
     cleanupDesktop();
     cleanupCameras();
     cleanupCaptures();
@@ -957,7 +973,7 @@ export class EditorInstance {
     // the output window and start audio when they're actually needed.
     const _apiHints = detectAPIUsage(raw);
     const _needsCanvas = _apiHints.usesDraw || _apiHints.usesLayer || _apiHints.usesPixi ||
-      _apiHints.usesShaderFX ||
+      _apiHints.usesShaderFX || _apiHints.usesThree ||
       (_apiHints.usesShader && _apiHints.shaderStartCalled) ||
       (_apiHints.usesGLShader && _apiHints.shaderStartCalled);
     if (_needsCanvas) this._showOutputWin();

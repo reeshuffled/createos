@@ -439,4 +439,24 @@ export const SensorsAPI = {
     };
     return sig;
   },
+
+  // ── Haptics (#39) ──────────────────────────────────────────────────────────
+
+  // sensors.vibrate(pattern) — Vibration API wrapper. pattern: ms or [on,off,on,…]
+  vibrate(pattern = 100) {
+    navigator.vibrate?.(pattern);
+    return SensorsAPI;
+  },
+
+  // sensors.haptics — shorthand object for common patterns
+  haptics: {
+    pulse(intensity = 1) {
+      navigator.vibrate?.(Math.max(10, Math.round(intensity * 200)));
+    },
+    tap()    { navigator.vibrate?.(40); },
+    doubleTap() { navigator.vibrate?.([40, 60, 40]); },
+    buzz(ms = 300) { navigator.vibrate?.(ms); },
+    stop()   { navigator.vibrate?.(0); },
+    pattern(...durations) { navigator.vibrate?.(durations); },
+  },
 };

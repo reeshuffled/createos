@@ -22,6 +22,15 @@ import {
   addBlockToCategoryMeta,
 } from "../blocks/blocks.js";
 import { editImage } from "../api/image-edit.js";
+import { ThreeScene, THREE } from "../api/three-scene.js";
+import { signalGraph } from "../api/signal-graph.js";
+import { ascii } from "../api/ascii.js";
+import { Sprite } from "../api/sprite.js";
+import { PluginHost, cleanupPlugins } from "../api/plugin-host.js";
+import { shell } from "../api/shell.js";
+import { midi, cleanupMidi } from "../api/midi.js";
+import { external, cleanupExternal } from "../api/external.js";
+import { statusBar, cleanupStatusBar } from "../api/status-bar.js";
 import { EditorInstance } from "../editor/editor-instance.js";
 import { saveProject, loadProject } from "../api/project.js";
 
@@ -92,6 +101,16 @@ _registerBuiltin('randUni', (lo, hi) => Math.random() * (hi - lo) + lo);
 // Expose registerAPI to user code so plugins and snippets can extend the platform.
 _registerBuiltin('registerAPI', registerAPI);
 _registerBuiltin('editImage',  editImage);
+_registerBuiltin('ThreeScene', ThreeScene);
+_registerBuiltin('THREE',      THREE);
+_registerBuiltin('signalGraph', signalGraph);
+_registerBuiltin('ascii',      ascii);
+_registerBuiltin('Sprite',     Sprite);
+_registerBuiltin('PluginHost', PluginHost);
+_registerBuiltin('shell',    shell);
+_registerBuiltin('midi',      midi);
+_registerBuiltin('external',  external);
+_registerBuiltin('statusBar', statusBar);
 
 // Wire up extensibility appliers so registerAPI(name, impl, { blocks, toolkit }) works.
 _setBlocksApplier(applyExternalBlocks);
@@ -110,6 +129,9 @@ EventTarget.prototype.addEventListener = function(type, handler, options) {
 preloadVision();
 
 window.onload = () => {
+  // ── Signal routing table — reset on each run by cleanupSignalGraph() ──────
+  window.__ar_signalRoutes = [];
+
   // ── Camera / Mic ───────────────────────────────────────────────────────────
   initCamera();
   initMic();

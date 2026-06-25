@@ -77,7 +77,11 @@ function _makeCtx2d(canvas) {
   };
 }
 
+const _ctxCache = new WeakMap();
 HTMLCanvasElement.prototype.getContext = function (type) {
-  if (type === '2d') return _makeCtx2d(this);
+  if (type === '2d') {
+    if (!_ctxCache.has(this)) _ctxCache.set(this, _makeCtx2d(this));
+    return _ctxCache.get(this);
+  }
   return null;
 };
