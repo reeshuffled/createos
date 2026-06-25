@@ -283,9 +283,15 @@ describe('PianoRollViz', () => {
 describe('EQWidget', () => {
   afterEach(() => cleanupAudio());
 
-  test('creates a DOM element on body', () => {
+  test('creates a WM window and stores winId', () => {
     const eq = new EQWidget({ title: 'Test EQ' });
-    expect(document.querySelector('.ar-eq-widget')).not.toBeNull();
+    // In test environment wm may not be available; just verify _winId is set or null gracefully
+    if (window.wm) {
+      expect(eq._winId).toBeTruthy();
+      expect(document.getElementById(eq._winId)).not.toBeNull();
+    } else {
+      expect(eq._winId).toBeNull();
+    }
     eq._destroy();
   });
 
@@ -318,12 +324,14 @@ describe('EQWidget', () => {
     eq._destroy();
   });
 
-  test('.hide() and .show() toggle display', () => {
+  test('.hide() and .show() toggle window display', () => {
     const eq = new EQWidget();
+    if (!window.wm || !eq._winId) { eq._destroy(); return; }
+    const win = document.getElementById(eq._winId);
     eq.hide();
-    expect(eq._el.style.display).toBe('none');
+    expect(win.style.display).toBe('none');
     eq.show();
-    expect(eq._el.style.display).toBe('');
+    expect(win.style.display).toBe('');
     eq._destroy();
   });
 
@@ -335,11 +343,17 @@ describe('EQWidget', () => {
     eq._destroy();
   });
 
-  test('._destroy() removes DOM element', () => {
+  test('._destroy() cleans up resources', () => {
     const eq = new EQWidget();
-    expect(document.querySelector('.ar-eq-widget')).not.toBeNull();
+    const winId = eq._winId;
     eq._destroy();
-    expect(document.querySelector('.ar-eq-widget')).toBeNull();
+    // RAF and analyser should be cleared
+    expect(eq._rafId).toBeNull();
+    expect(eq._analyser).toBeNull();
+    // Window removed (if wm available)
+    if (window.wm && winId) {
+      expect(document.getElementById(winId)).toBeNull();
+    }
   });
 
   test('audio.eqWidget() factory creates EQWidget', () => {

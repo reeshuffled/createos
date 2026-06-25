@@ -124,6 +124,56 @@
         background-size: 24px 24px;
       }
 
+      /* ── Window animations ──────────────────────────────────────────────── */
+      @keyframes wm-spawn-in {
+        from { opacity: 0; transform: scale(0.88); }
+        to   { opacity: 1; transform: scale(1); }
+      }
+      @keyframes wm-close-out {
+        from { opacity: 1; transform: scale(1); }
+        to   { opacity: 0; transform: scale(0.88); }
+      }
+      .wm-spawning {
+        animation: wm-spawn-in 0.14s ease-out forwards;
+      }
+      .wm-closing {
+        animation: wm-close-out 0.12s ease-in forwards;
+        pointer-events: none;
+      }
+
+      /* ── Embed / viewer mode ─────────────────────────────────────────────── */
+      body.ar-embed #appToolbar,
+      body.ar-embed #desktopIconBar { display: none !important; }
+      body.ar-embed #desktop { top: 0 !important; }
+      /* Hide editor windows; canvas/output + user-spawned windows remain visible */
+      body.ar-embed .wm-win[id^="win-editor-"] { display: none !important; }
+      /* Canvas output windows: fullscreen, no chrome */
+      body.ar-embed .wm-win.ar-embed-output {
+        top: 0 !important; left: 0 !important;
+        width: 100vw !important; height: 100vh !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        border: none !important;
+        z-index: 1 !important;
+      }
+      body.ar-embed .wm-win.ar-embed-output .wm-titlebar { display: none !important; }
+      body.ar-embed .wm-win.ar-embed-output .wm-body {
+        height: 100vh !important;
+        padding: 0 !important;
+      }
+      body.ar-embed .wm-win.ar-embed-output .wm-resize { display: none !important; }
+
+      /* ── Inlay hints ─────────────────────────────────────────────────────── */
+      .ar-inlay-hint {
+        color: #888;
+        font-style: italic;
+        font-size: 0.82em;
+        padding: 0 2px 0 0;
+        pointer-events: none;
+        user-select: none;
+        letter-spacing: 0;
+      }
+
       /* ── Window chrome ───────────────────────────────────────────────────── */
       .wm-win {
         position: absolute;
@@ -657,6 +707,7 @@ s.start();</div>
         <li id="newToolkitBtn" title="New Toolkit"><i class="fa-solid fa-toolbox"></i><i class="fa-solid fa-plus" style="font-size:7px;vertical-align:super;margin-left:1px;"></i></li>
         <li id="filesBtn" title="File Browser"><i class="fa-solid fa-folder-open"></i><i class="fa-solid fa-plus" style="font-size:7px;vertical-align:super;margin-left:1px;"></i></li>
         <li id="newVizBtn" title="New Visualizer"><i class="fa-solid fa-wave-square"></i><i class="fa-solid fa-plus" style="font-size:7px;vertical-align:super;margin-left:1px;"></i></li>
+        <li id="runAllBtn" title="Run All Editors"><i class="fa-solid fa-play"></i><i class="fa-solid fa-layer-group" style="font-size:8px;margin-left:2px;"></i></li>
         <li id="micToggle" style="display:none;"><i class="fa-solid fa-microphone-slash"></i></li>
         <li id="newMicVizBtn" title="New Mic Visualizer" style="display:none;"><i class="fa-solid fa-microphone"></i><i class="fa-solid fa-chart-simple" style="font-size:8px;margin-left:1px;"></i><i class="fa-solid fa-plus" style="font-size:7px;vertical-align:super;margin-left:1px;"></i></li>
         <li id="cameraToggle" style="display:none;"><i class="fa-solid fa-video-slash"></i></li>
@@ -666,6 +717,7 @@ s.start();</div>
         <li id="newCamVizBtn" title="New Camera Window" style="display:none;"><i class="fa-solid fa-video"></i><i class="fa-solid fa-window-restore" style="font-size:8px;margin-left:1px;"></i><i class="fa-solid fa-plus" style="font-size:7px;vertical-align:super;margin-left:1px;"></i></li>
         <li id="saveProjectBtn" title="Export project" style="margin-left:auto;"><i class="fa-solid fa-download"></i></li>
         <li id="loadProjectBtn" title="Import project"><i class="fa-solid fa-upload"></i></li>
+        <li id="shareProjectBtn" title="Copy embed URL (entire desktop)"><i class="fa-solid fa-share-nodes"></i></li>
         <li id="undoWinBtn" title="Undo last window action" style="opacity:0.4"><i class="fa-solid fa-rotate-left"></i></li>
         <li id="redoWinBtn" title="Redo last window action" style="opacity:0.4"><i class="fa-solid fa-rotate-right"></i></li>
 

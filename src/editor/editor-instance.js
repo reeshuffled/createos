@@ -6,10 +6,12 @@ import { javascript } from '@codemirror/lang-javascript';
 import { bracketMatching, foldGutter, codeFolding, foldKeymap, indentOnInput, foldCode, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap, autocompletion, completionKeymap } from '@codemirror/autocomplete';
 import { highlightSelectionMatches } from '@codemirror/search';
+import { linter, lintGutter } from '@codemirror/lint';
+import esprima from 'esprima';
 import { addInfiniteLoopProtection, friendlyError, extractScriptLine } from './live-patch.js';
 import { detectAPIUsage } from './api-detector.js';
 import { _beginRun, _endRun } from '../runtime/api-registry.js';
-import { initInlineWidgets, inlineWidgetsExtension } from './inline-widgets.js';
+import { initInlineWidgets, inlineWidgetsExtension, toggleInlayHintsEffect, inlayHintsEnabledField } from './inline-widgets.js';
 import { searchMarksField, initSearch } from './cm-search.js';
 import { paramHintsExtension } from './param-hints.js';
 import { shaderSignalPickerExtension } from './shader-signal-picker.js';
@@ -42,6 +44,32 @@ import {
   loadWorkspaceJSON, registerSidebarDeleteZone,
 } from '../blocks/blocks.js';
 import { jsToBlocks } from '../blocks/js-to-blocks.js';
+
+// ── Syntax linter (esprima-based) ────────────────────────────────────────────
+
+function _jsLinterSource(view) {
+  const code = view.state.doc.toString();
+  if (!code.trim()) return [];
+  try {
+    esprima.parseScript(code, { tolerant: false, range: true, loc: true });
+    return [];
+  } catch (err) {
+    // esprima error has .lineNumber, .column, .description, .index
+    const from = err.index ?? 0;
+    const to   = Math.min(from + 1, view.state.doc.length);
+    return [{
+      from,
+      to,
+      severity: 'error',
+      message: err.description ?? err.message ?? 'Syntax error',
+    }];
+  }
+}
+
+const jsLinterExtension = [
+  lintGutter(),
+  linter(_jsLinterSource, { delay: 400 }),
+];
 
 // ── Error line decoration ─────────────────────────────────────────────────────
 
@@ -111,6 +139,9 @@ export class EditorInstance {
 
     this.blocklyWorkspace = null;
     this.blocksMode = false;
+
+    this._autoExec = localStorage.getItem(`vl-autoexec-${id}`) !== '0';
+    this._autoExecTimer = null;
 
     this.editorWinId = `win-editor-${id}`;
     this.canvasWinId = `win-canvas-${id}`;
@@ -301,6 +332,7 @@ export class EditorInstance {
           highlightSelectionMatches(),
           searchMarksField,
           errorLineField,
+          jsLinterExtension,
           inlineWidgetsExtension(),
           paramHintsExtension(),
           shaderSignalPickerExtension(),
@@ -311,6 +343,16 @@ export class EditorInstance {
             saveTimer = this._native.setTimeout(
               () => localStorage.setItem(storageKey, this.cm.state.doc.toString()), 500
             );
+            if (this._autoExec) {
+              this._native.clearTimeout(this._autoExecTimer);
+              this._autoExecTimer = this._native.setTimeout(() => {
+                const code = this.cm.state.doc.toString();
+                // Only auto-run if code parses cleanly
+                try { esprima.parseScript(code, { tolerant: false }); }
+                catch (_) { return; }
+                this.execute({ soft: true });
+              }, 1000);
+            }
           }),
           keymap.of([
             ...defaultKeymap,
@@ -443,11 +485,35 @@ export class EditorInstance {
       this.inlineWidgets.refresh();
     });
 
+    // Inlay hints toggle
+    const inlayBtn = document.createElement('button');
+    inlayBtn.className = 'ar-btn';
+    inlayBtn.title = 'Toggle inline parameter names';
+    inlayBtn.innerHTML = '<i class="fa-solid fa-tag"></i>';
+    inlayBtn.addEventListener('click', () => {
+      const enabled = this.cm.state.field(inlayHintsEnabledField, false);
+      this.cm.dispatch({ effects: toggleInlayHintsEffect.of(!enabled) });
+      inlayBtn.classList.toggle('ar-btn-active', !enabled);
+    });
+
+    // Auto-execute toggle
+    this._autoExecBtn = document.createElement('button');
+    this._autoExecBtn.className = 'ar-btn' + (this._autoExec ? ' ar-btn-active' : '');
+    this._autoExecBtn.title = 'Auto-run on edit (debounced)';
+    this._autoExecBtn.innerHTML = '<i class="fa-solid fa-bolt"></i>';
+    this._autoExecBtn.addEventListener('click', () => {
+      this._autoExec = !this._autoExec;
+      this._autoExecBtn.classList.toggle('ar-btn-active', this._autoExec);
+      localStorage.setItem(`vl-autoexec-${this.id}`, this._autoExec ? '1' : '0');
+    });
+
     bar.appendChild(modeToggle);
     bar.appendChild(this.executeBtn);
     bar.appendChild(this.stopBtn);
     bar.appendChild(this.clearCanvasBtn);
     bar.appendChild(this.consoleToggleBtn);
+    bar.appendChild(inlayBtn);
+    bar.appendChild(this._autoExecBtn);
     return bar;
   }
 
@@ -541,6 +607,7 @@ export class EditorInstance {
     // Start hidden so _showOutputWin() always runs its positioning logic
     canvasWin.style.display = 'none';
     canvasWin.classList.add('wm-draggable-body');
+    if (document.body.classList.contains('ar-embed')) canvasWin.classList.add('ar-embed-output');
     const canvasBody = canvasWin.querySelector('.wm-body');
     canvasBody.style.flexDirection = 'column';
     canvasBody.appendChild(this.fsContainer);
@@ -934,6 +1001,55 @@ export class EditorInstance {
     this._setIdle();
   }
 
+  // Like reset() but preserves output window and keepAlive Set (for soft/auto-exec re-run).
+  _softReset() {
+    _endRun();
+    this.cm.dispatch({ effects: setErrorLineEffect.of(null) });
+    window.__ar_paused = false;
+    this._pausedState = null;
+    this._listeners.forEach(({ target, type, handler, options }) =>
+      target?.removeEventListener(type, handler, options));
+    this._listeners = [];
+    for (const id of this._intervals.keys()) this._native.clearInterval(id);
+    for (const id of this._timeouts.keys()) this._native.clearTimeout(id);
+    this._intervals.clear();
+    this._timeouts.clear();
+    stopVision();
+    cleanupAudio();
+    cleanupShaders();
+    cleanupGLShaders();
+    cleanupPipelines();
+    cleanupPixi();
+    cleanupViz();
+    cleanupMedia();
+    cleanupVideoSignal();
+    cleanupSensors();
+    cleanupThree();
+    cleanupSignalGraph();
+    cleanupAscii();
+    cleanupSprites();
+    cleanupPlugins();
+    cleanupMidi();
+    cleanupExternal();
+    cleanupStatusBar();
+    cleanupDesktop();
+    cleanupCameras();
+    cleanupCaptures();
+    // Preserve _keepAlive and _hadOutput so the output window stays alive
+    if (this.currentScript) { document.body.removeChild(this.currentScript); this.currentScript = null; }
+    this._layerObjects.forEach(layer => layer.reset());
+    this._layerObjects.clear();
+    this._drawTargets.clear();
+    for (const [z, c] of this._layers) {
+      if (z !== 0) c.remove();
+    }
+    this._layers = new Map([[0, this.mainCanvas]]);
+    this._getLayerCanvas = this._makeGetLayerCanvas();
+    this._refreshDraw();
+    this.idleWatcher = null;
+    this._setIdle();
+  }
+
   _showOutputWin() {
     this._ensureOutputWin();
     const outputWin = document.getElementById(this.canvasWinId);
@@ -953,7 +1069,7 @@ export class EditorInstance {
     this._hadOutput = true;
   }
 
-  execute() {
+  execute({ soft = false } = {}) {
     const blocksActive = this.blocksMode && this.blocklyWorkspace && !workspaceIsEmpty(this.blocklyWorkspace);
     const raw = blocksActive ? getWorkspaceCode(this.blocklyWorkspace) : this.cm.state.doc.toString();
 
@@ -966,7 +1082,11 @@ export class EditorInstance {
       return;
     }
 
-    this.reset();
+    if (soft) {
+      this._softReset();
+    } else {
+      this.reset();
+    }
     _beginRun(); // snapshot API registry so run-scoped registerAPI() calls are reverted on reset
 
     // Smart output detection: analyse user code before executing so we only open
@@ -979,8 +1099,10 @@ export class EditorInstance {
     if (_needsCanvas) this._showOutputWin();
 
     window.__ar_audioReady = _apiHints.usesAudio ? startAudio() : Promise.resolve();
-    this._keepAlive = new Set();
-    this._hadOutput = false;
+    if (!soft) {
+      this._keepAlive = new Set();
+      this._hadOutput = false;
+    }
     window.__ar_keepAlive = this._keepAlive;
     this.consoleEl.innerHTML = '';
 

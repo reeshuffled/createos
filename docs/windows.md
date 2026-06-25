@@ -160,3 +160,61 @@ wm.list()   // → ['win-toolkit', 'win-editor', 'win-spawn-1', ...]
 | `controls` | boolean | false | Show video controls (type: video) |
 | `z` | number | 0 | Canvas z-index to mirror (type: canvas) |
 | `shader` | Shader | — | Shader instance to mirror (type: shader) |
+| `noChrome` | boolean | false | Hide titlebar entirely |
+| `transparent` | boolean | false | Semi-transparent window background |
+| `onClose` | function | — | Callback fired when window is closed |
+
+---
+
+## Live methods
+
+```js
+wm.setZ(id, 50)                            // change CSS z-index
+wm.setOpacity(id, 0.7)                     // set window opacity (0–1)
+wm.filter(id, 'brightness(2) hue-rotate(30deg)')  // CSS filter on .wm-body
+wm.filter(id, '')                          // clear filter
+const id = wm.getByTitle('My Window')      // look up id by titlebar text (case-insensitive)
+```
+
+### Drum/beat flash pattern
+
+```js
+// Pulse a window's brightness on each beat
+const id = wm.spawn('Flash', { type: 'html', html: '<canvas id="c"></canvas>', w: 300, h: 300 });
+audio.pat('bd').stream(v => {
+  if (v > 0) {
+    wm.filter(id, 'brightness(3)');
+    setTimeout(() => wm.filter(id, ''), 80);
+  }
+});
+```
+
+---
+
+## Video windows — viz fold-out
+
+Video windows include a ♪ button in the titlebar. Clicking it folds out a live spectrum/waveform panel beneath the video. The panel has a source selector (the video's own audio, master output, or mic) and a style selector (wave / bars / spectrogram).
+
+---
+
+## Embed / distribution mode
+
+Share the entire desktop as a URL — all editors, window positions, and code — using the **⇒ share** button in the app toolbar (`#shareProjectBtn`). Clicking it serializes the project and copies a URL to the clipboard:
+
+```
+https://your-ide.example.com/?embed=1&project=<base64>
+```
+
+Loading that URL activates embed mode:
+- All editor windows are hidden.
+- Canvas output windows fill the viewport (no titlebar, no chrome).
+- User-spawned `wm.spawn()` windows remain visible at their saved positions.
+- All editors auto-execute immediately.
+
+Single-editor variant (just code, no layout):
+
+```
+?embed=1&code=<base64>
+```
+
+The base64 encoding is `btoa(encodeURIComponent(code))` — safe for all characters.

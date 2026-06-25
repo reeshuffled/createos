@@ -375,6 +375,108 @@ class CustomStage {
   }
 }
 
+// ── SRT Subtitle stage ────────────────────────────────────────────────────────
+
+function _parseSRT(srt) {
+  return srt.trim().split(/\n\n+/).map(block => {
+    const lines = block.trim().split('\n');
+    if (lines.length < 3) return null;
+    const m = lines[1].match(/(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})/);
+    if (!m) return null;
+    const toSec = s => {
+      const [h, mi, rest] = s.split(':');
+      const [sec, ms] = rest.split(/[,.]/).map(Number);
+      return Number(h) * 3600 + Number(mi) * 60 + sec + ms / 1000;
+    };
+    return {
+      start: toSec(m[1]),
+      end:   toSec(m[2]),
+      text:  lines.slice(2).join('\n').replace(/<[^>]+>/g, ''),
+    };
+  }).filter(Boolean);
+}
+
+class SubtitleStage {
+  constructor(upstream, srtText, opts = {}) {
+    this._upstream  = upstream;
+    this._cues      = _parseSRT(srtText);
+    this._opts      = opts;
+    this.canvas     = null;
+    this._ctx       = null;
+    this._isShader  = false;
+  }
+
+  _start() {
+    const src       = this._upstream._getSource();
+    this.canvas     = document.createElement('canvas');
+    this.canvas.width  = _srcWidth(src);
+    this.canvas.height = _srcHeight(src);
+    this._ctx = this.canvas.getContext('2d');
+  }
+
+  _getSource() { return this.canvas; }
+
+  read() {
+    const src = this._upstream._getSource();
+    if (!src) return;
+    const W = _srcWidth(src), H = _srcHeight(src);
+    if (this.canvas.width !== W || this.canvas.height !== H) {
+      this.canvas.width = W; this.canvas.height = H;
+    }
+    this._ctx.clearRect(0, 0, W, H);
+    this._ctx.drawImage(src, 0, 0, W, H);
+
+    const t   = src.currentTime ?? 0;
+    const cue = this._cues.find(c => t >= c.start && t <= c.end);
+    if (!cue) return;
+
+    const {
+      fontSize  = 28,
+      color     = '#fff',
+      bg        = 'rgba(0,0,0,0.65)',
+      font      = 'sans-serif',
+      weight    = 'bold',
+      stroke    = true,
+      strokeColor = '#000',
+      strokeWidth = 1.5,
+      marginBottom = 24,
+    } = this._opts;
+
+    const ctx    = this._ctx;
+    const lines  = cue.text.split('\n');
+    const lineH  = fontSize * 1.35;
+    const totalH = lines.length * lineH;
+
+    ctx.font        = `${weight} ${fontSize}px ${font}`;
+    ctx.textAlign   = 'center';
+    ctx.textBaseline = 'bottom';
+
+    for (let i = 0; i < lines.length; i++) {
+      const txt = lines[i];
+      const tw  = ctx.measureText(txt).width;
+      const tx  = W / 2;
+      const ty  = H - marginBottom - (lines.length - 1 - i) * lineH;
+
+      if (bg) {
+        ctx.fillStyle = bg;
+        ctx.fillRect(tx - tw / 2 - 10, ty - fontSize - 4, tw + 20, fontSize + 10);
+      }
+      if (stroke) {
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth   = strokeWidth;
+        ctx.strokeText(txt, tx, ty);
+      }
+      ctx.fillStyle = color;
+      ctx.fillText(txt, tx, ty);
+    }
+  }
+
+  _destroy() {
+    this.canvas = null;
+    this._ctx   = null;
+  }
+}
+
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
 export class Pipeline {
@@ -442,6 +544,12 @@ export class Pipeline {
    */
   use(factory) {
     this._stages.push(new CustomStage(this._last(), factory));
+    return this;
+  }
+
+  /** Overlay SRT subtitles on the upstream source (video or canvas with .currentTime). */
+  subtitle(srtText, opts = {}) {
+    this._stages.push(new SubtitleStage(this._last(), srtText, opts));
     return this;
   }
 

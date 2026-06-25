@@ -39,6 +39,9 @@ class CameraStream {
 
 export const Camera = {
   async open({ index = 0, deviceId = null } = {}) {
+    if (window.__ar_camera_on === false) {
+      throw new Error('Camera is disabled — enable the camera via the toolbar toggle first.');
+    }
     let id = deviceId;
     if (!id) {
       const all = await navigator.mediaDevices.enumerateDevices();

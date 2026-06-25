@@ -200,6 +200,35 @@ setInterval(() => shader.set(audio.level), 16);
 
 These follow the same signal bus pattern as `sensors.*` and `video.signal` — any live 0–1 value can drive a shader uniform, a filter frequency, a draw parameter, or anything else. See [sensors.md](sensors.md) for the full comparison.
 
+### Speech recognition
+
+```js
+// Fire on a specific word (Chrome/Edge only)
+audio.onWord('boom', () => draw.bg('red'));
+
+// Receive every recognized phrase
+audio.onSpeech(phrase => { console.log(phrase); });
+```
+
+Continuous recognition; auto-restarts on silence. Stops on reset.
+
+### Speech synthesis
+
+```js
+audio.say('hello world');
+audio.say('hello', {
+  voice: 'Google UK English Female',  // voice name from audio.voices()
+  rate:  1.2,    // 0.1 – 10
+  pitch: 0.8,    // 0 – 2
+  volume: 1.0,   // 0 – 1
+  lang: 'en-GB',
+});
+
+audio.voices()   // → array of available SpeechSynthesisVoice objects
+```
+
+Cancelled on reset.
+
 ---
 
 ## Analysis (Audio → Visual)
@@ -263,6 +292,136 @@ pat("C3 E3 G3 Bb3", (note, time, dur) => {
   const norm = (hz - 130) / 800;        // normalize to 0..1
   shader.set(1, norm);                  // → hue, warp, any visual param
 }).start();
+```
+
+### Master FFT signal — `audio.fft`
+
+Taps `Tone.Destination` (the master output). No `chain()` needed — it sees everything.
+
+```js
+audio.fft.value    // current dominant frequency bin (number)
+audio.fft.bass     // low-band energy 0–1
+audio.fft.mid      // mid-band energy 0–1
+audio.fft.high     // high-band energy 0–1
+audio.fft.fft      // Float32Array of all bins (raw)
+audio.fft.stream(fn)  // RAF push: fn({ value, bass, mid, high, fft })
+```
+
+Use `audio.fft.bass` to drive a shader uniform without chaining any analyser manually:
+
+```js
+const s = new GLShader(`
+  float b = custom.x;
+  vec3 col = vec3(b, 0., 1. - b);
+  gl_FragColor = vec4(col, 1.);
+`).start();
+setInterval(() => s.set(0, audio.fft.bass), 16);
+```
+
+---
+
+## Audio Files — `audio.load()` / `audio.upload()`
+
+Load audio from URL or user file-picker. Returns `AudioFile`.
+
+```js
+const f = await audio.load('https://example.com/beat.mp3');
+const f = await audio.upload();   // opens file picker
+```
+
+### Playback
+
+```js
+f.play(offset?)   // offset in seconds (default 0)
+f.pause()
+f.stop()
+f.seek(seconds)
+f.loop(true)
+f.volume(-6)      // dB
+
+f.currentTime     // live getter (seconds)
+f.duration        // total length (seconds)
+f.state           // 'started' | 'stopped' | 'paused'
+await f.ready     // resolves when buffer loaded
+```
+
+### FX chain (chainable, return `this`)
+
+```js
+f.filter('lowpass', 800, 1)
+ .reverb(2.5)
+ .eq(-3, 0, 6)
+ .delay(0.25, 0.4)
+ .pitchShift(7)
+ .distort(0.3)
+```
+
+### Time callbacks
+
+```js
+f.onTime(4.2, () => { /* fires when playback reaches 4.2s */ });
+```
+
+### Waveform canvas
+
+```js
+const wf = f.waveform({ width: 600, height: 80, color: '#0ff', bg: '#000' });
+// wf is an HTMLCanvasElement — live playhead updates on each frame
+document.body.appendChild(wf);
+// or pass to draw:
+draw.image(wf, 0, 800);
+```
+
+### Live FFT signal from a file
+
+```js
+const sig = f.signal(32);    // 32 frequency bins
+sig.bass / sig.mid / sig.high   // energy bands 0–1
+sig.stream(fn)
+```
+
+---
+
+## Audio Visualizers
+
+### Spectrogram — `audio.spectrogram(source, opts)`
+
+Scrolling frequency×time heatmap.
+
+```js
+const sg = audio.spectrogram(source, {
+  palette: 'rainbow',   // 'rainbow' | 'thermal' | 'cool' | 'mono'
+  width:   800,
+  height:  256,
+});
+// sg.canvas → live HTMLCanvasElement
+wm.spawn('Spectrogram', { type: 'canvas', canvas: sg.canvas, w: 800, h: 256 });
+// or:
+draw.image(sg.canvas, 0, 0);
+```
+
+### Piano roll — `audio.pianoRoll(opts)`
+
+Falling-note overlay. Auto-hooks `Instrument.play()` — no manual wiring.
+
+```js
+const roll = audio.pianoRoll({
+  z:        5,        // layer z-index
+  opacity:  0.85,
+  speed:    120,      // px/s fall rate
+  midiMin:  36,       // C2
+  midiMax:  96,       // C6
+});
+```
+
+### EQ widget — `audio.eqWidget(opts)`
+
+Floating 3-band EQ panel. Tone-compatible — use `.chain()` like any Tone node.
+
+```js
+const eq = audio.eqWidget({ x: 100, y: 100 });
+eq.low(-3).mid(2).high(-1)   // chainable setters (dB)
+synth.chain(eq)               // Tone-compatible
 ```
 
 ---

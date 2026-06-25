@@ -705,9 +705,10 @@ export function initWM(onContentResize) {
       win._wmRescueContent?.();
       _disposeChannel(win.id);
       _deleteWinHandle(win.id);
-      win.remove();
       spawnedIds.delete(win.id);
-      win._wmUserOnClose?.();
+      const _onClose = win._wmUserOnClose;
+      win.classList.add('wm-closing');
+      win.addEventListener('animationend', () => { win.remove(); _onClose?.(); }, { once: true });
     } else {
       win.style.display = 'none';
     }
@@ -871,66 +872,18 @@ export function initWM(onContentResize) {
 
   // Pre-existing built-in windows have no audio output — no controls needed.
 
-  // ── Audio visualizer window builder ───────────────────────────────────────
+  // ── Reusable spectrum/analyser core (F1) ──────────────────────────────────
+  // Factory that binds an audio source to a canvas with a draw loop.
+  // Returns { canvas, start, stop, setSource(id), setStyle(style), cleanup }
+  // Consumed by _buildVizWindow, EQ widget (Layer 2), and viz-in-video fold-out (Layer 2).
 
-  function _buildVizWindow(win, body, opts = {}) {
-    body.style.cssText += 'flex-direction:column;padding:0;overflow:hidden;background:#0d0d1a;';
-
-    // Controls bar
-    const ctrl = document.createElement('div');
-    ctrl.style.cssText = 'display:flex;align-items:center;gap:5px;padding:4px 8px;background:#13131f;border-bottom:1px solid #2a2a3e;flex-shrink:0;';
-
-    const sourceSelect = document.createElement('select');
-    sourceSelect.style.cssText = 'flex:1;min-width:0;font-size:11px;background:#1e1e2e;color:#cdd6f4;border:1px solid #313244;border-radius:3px;padding:2px 4px;';
-
-    const styleSelect = document.createElement('select');
-    styleSelect.style.cssText = 'font-size:11px;background:#1e1e2e;color:#cdd6f4;border:1px solid #313244;border-radius:3px;padding:2px 4px;';
-    for (const s of ['wave', 'bars', 'ring']) {
-      const o = document.createElement('option');
-      o.value = s; o.textContent = s;
-      styleSelect.appendChild(o);
-    }
-
-    ctrl.appendChild(sourceSelect);
-    ctrl.appendChild(styleSelect);
-    body.appendChild(ctrl);
-
-    // Canvas
-    const canvas = document.createElement('canvas');
-    canvas.style.cssText = 'flex:1;width:100%;min-height:0;display:block;';
-    body.appendChild(canvas);
-
-    new ResizeObserver(() => {
-      canvas.width  = canvas.offsetWidth  * devicePixelRatio;
-      canvas.height = canvas.offsetHeight * devicePixelRatio;
-    }).observe(canvas);
-
-    // State
-    let rafId = null;
-    let toneAn = null;   // Tone.Analyser for master / channel sources
-    let rawAn  = null;   // raw AnalyserNode for mic / video sources
+  function _createSpectrumCore(canvas, getStyle, opts = {}) {
     const audioCtx = Tone.getContext().rawContext;
-
-    function refreshSources() {
-      const prev = sourceSelect.value;
-      sourceSelect.innerHTML = '';
-      const srcs = [
-        { id: 'master', label: 'Master Output' },
-        { id: 'mic',    label: 'Mic' },
-      ];
-      desktop.querySelectorAll('.wm-win').forEach(w => {
-        if (w === win) return;
-        const title = w.querySelector('.wm-title')?.textContent?.trim() || w.id;
-        if (w.querySelector('video')) srcs.push({ id: 'vid:' + w.id, label: title + ' · video' });
-        if (_channels.has(w.id))     srcs.push({ id: 'ch:'  + w.id, label: title + ' · channel' });
-      });
-      for (const { id, label } of srcs) {
-        const o = document.createElement('option');
-        o.value = id; o.textContent = label; o.selected = id === prev;
-        sourceSelect.appendChild(o);
-      }
-      if (!sourceSelect.value) sourceSelect.selectedIndex = 0;
-    }
+    const c2d = canvas.getContext('2d');
+    let rafId = null;
+    let toneAn = null;
+    let rawAn  = null;
+    let _currentSrc = null;
 
     function disconnect() {
       if (toneAn) { try { toneAn.dispose(); } catch (_) {} toneAn = null; }
@@ -940,13 +893,15 @@ export function initWM(onContentResize) {
       rawAn = null;
     }
 
-    function connect(id) {
+    function setSource(id) {
+      _currentSrc = id;
       disconnect();
+      const style = getStyle();
       if (id === 'master') {
-        toneAn = new Tone.Analyser({ type: styleSelect.value === 'wave' ? 'waveform' : 'fft', size: 128 });
+        toneAn = new Tone.Analyser({ type: style === 'wave' ? 'waveform' : 'fft', size: 128 });
         Tone.getDestination().connect(toneAn);
       } else if (id === 'mic') {
-        rawAn = window.__ar_mic_analyser; // may be null until mic is toggled on
+        rawAn = window.__ar_mic_analyser;
       } else if (id.startsWith('vid:')) {
         const vid = document.getElementById(id.slice(4))?.querySelector('video');
         if (vid) {
@@ -962,40 +917,37 @@ export function initWM(onContentResize) {
       } else if (id.startsWith('ch:')) {
         const ch = _channels.get(id.slice(3));
         if (ch) {
-          toneAn = new Tone.Analyser({ type: styleSelect.value === 'wave' ? 'waveform' : 'fft', size: 128 });
+          toneAn = new Tone.Analyser({ type: style === 'wave' ? 'waveform' : 'fft', size: 128 });
           ch.connect(toneAn);
         }
       }
     }
 
-    // Draw loop
-    const c2d = canvas.getContext('2d');
+    function setStyle(style) {
+      if (toneAn) toneAn.type = style === 'wave' ? 'waveform' : 'fft';
+    }
 
     function frame() {
       rafId = requestAnimationFrame(frame);
       const W = canvas.width, H = canvas.height;
       if (!W || !H) return;
-
-      // Re-fetch mic analyser each frame — it's created lazily
-      if (sourceSelect.value === 'mic' && !rawAn) rawAn = window.__ar_mic_analyser;
+      if (_currentSrc === 'mic' && !rawAn) rawAn = window.__ar_mic_analyser;
 
       c2d.fillStyle = '#0d0d1a';
       c2d.fillRect(0, 0, W, H);
 
-      let vals; // Float32Array, 0–1
+      let vals;
+      const style = getStyle();
       if (toneAn) {
         const raw = toneAn.getValue();
         vals = Float32Array.from(raw, v => Math.max(0, Math.min(1, (v + 100) / 100)));
       } else if (rawAn) {
         const buf = new Uint8Array(rawAn.frequencyBinCount);
-        styleSelect.value === 'wave'
-          ? rawAn.getByteTimeDomainData(buf)
-          : rawAn.getByteFrequencyData(buf);
-        vals = Float32Array.from(buf, v => styleSelect.value === 'wave' ? v / 128 - 1 : v / 255);
+        style === 'wave' ? rawAn.getByteTimeDomainData(buf) : rawAn.getByteFrequencyData(buf);
+        vals = Float32Array.from(buf, v => style === 'wave' ? v / 128 - 1 : v / 255);
       } else return;
 
       const n = vals.length;
-      const style = styleSelect.value;
       const dpr = devicePixelRatio;
 
       if (style === 'bars') {
@@ -1015,7 +967,7 @@ export function initWM(onContentResize) {
           i === 0 ? c2d.moveTo(x, y) : c2d.lineTo(x, y);
         }
         c2d.stroke();
-      } else { // ring
+      } else {
         const cx = W / 2, cy = H / 2, r = Math.min(W, H) * 0.28;
         c2d.beginPath();
         c2d.strokeStyle = '#cba6f7';
@@ -1032,25 +984,187 @@ export function initWM(onContentResize) {
       }
     }
 
+    function start() { if (!rafId) frame(); }
+    function stop()  { cancelAnimationFrame(rafId); rafId = null; }
+    function cleanup() { stop(); disconnect(); }
+
+    if (opts.autoStart !== false) start();
+    return { canvas, start, stop, setSource, setStyle, cleanup };
+  }
+
+  function _buildSourceSelect(win, excludeSelf = true) {
+    const srcs = [
+      { id: 'master', label: 'Master Output' },
+      { id: 'mic',    label: 'Mic' },
+    ];
+    desktop.querySelectorAll('.wm-win').forEach(w => {
+      if (excludeSelf && w === win) return;
+      const title = w.querySelector('.wm-title')?.textContent?.trim() || w.id;
+      if (w.querySelector('video')) srcs.push({ id: 'vid:' + w.id, label: title + ' · video' });
+      if (_channels.has(w.id))     srcs.push({ id: 'ch:'  + w.id, label: title + ' · channel' });
+    });
+    return srcs;
+  }
+
+  // ── Viz fold-out panel for video windows ──────────────────────────────────
+  // Injects a ♪ toolbar button + collapsible spectrum panel into a video window.
+  // Source defaults to the window's own video; source selector allows repurposing.
+
+  function _addVizPanel(win, body, winId) {
+    const tb = win.querySelector('.wm-titlebar');
+    if (!tb) return;
+
+    // Fold-out panel (initially hidden)
+    const panel = document.createElement('div');
+    panel.style.cssText = 'flex-shrink:0;height:80px;background:#0d0d1a;display:none;flex-direction:column;position:relative;';
+    // Insert after body in the window flex column
+    body.insertAdjacentElement('afterend', panel);
+
+    // Source selector inside panel
+    const srcBar = document.createElement('div');
+    srcBar.style.cssText = 'display:flex;align-items:center;gap:4px;padding:3px 6px;background:#13131f;flex-shrink:0;';
+    const srcSel = document.createElement('select');
+    srcSel.style.cssText = 'flex:1;font-size:10px;background:#1e1e2e;color:#cdd6f4;border:1px solid #313244;border-radius:3px;padding:1px 3px;';
+    const styleSel = document.createElement('select');
+    styleSel.style.cssText = 'font-size:10px;background:#1e1e2e;color:#cdd6f4;border:1px solid #313244;border-radius:3px;padding:1px 3px;';
+    for (const s of ['wave', 'bars', 'ring']) {
+      const o = document.createElement('option'); o.value = s; o.textContent = s;
+      styleSel.appendChild(o);
+    }
+    srcBar.appendChild(srcSel);
+    srcBar.appendChild(styleSel);
+    panel.appendChild(srcBar);
+
+    // Canvas
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'flex:1;width:100%;min-height:0;display:block;';
+    panel.appendChild(canvas);
+
+    const ro = new ResizeObserver(() => {
+      canvas.width  = canvas.offsetWidth  * devicePixelRatio;
+      canvas.height = canvas.offsetHeight * devicePixelRatio;
+    });
+    ro.observe(canvas);
+
+    let core = null;
+
+    function refreshSources() {
+      const prev = srcSel.value;
+      srcSel.innerHTML = '';
+      for (const { id, label } of _buildSourceSelect(win)) {
+        const o = document.createElement('option');
+        o.value = id; o.textContent = label; o.selected = id === prev;
+        srcSel.appendChild(o);
+      }
+      // Also add this window's own video as option if not already present
+      const selfVid = 'vid:' + winId;
+      if (![...srcSel.options].some(o => o.value === selfVid)) {
+        const o = document.createElement('option');
+        o.value = selfVid; o.textContent = 'This video';
+        srcSel.insertBefore(o, srcSel.firstChild);
+      }
+      if (!srcSel.value || srcSel.value !== prev) {
+        const defaultSrc = [...srcSel.options].find(o => o.value === selfVid) ? selfVid : 'master';
+        srcSel.value = defaultSrc;
+      }
+    }
+
+    function startCore() {
+      if (core) { core.cleanup(); core = null; }
+      core = _createSpectrumCore(canvas, () => styleSel.value);
+      core.setSource(srcSel.value);
+    }
+
+    srcSel.addEventListener('mousedown', refreshSources);
+    srcSel.addEventListener('change', () => core?.setSource(srcSel.value));
+    styleSel.addEventListener('change', () => core?.setStyle(styleSel.value));
+
+    // Toolbar toggle button
+    const vizBtn = document.createElement('span');
+    vizBtn.className = 'wm-btn';
+    vizBtn.title = 'Toggle audio visualizer';
+    vizBtn.innerHTML = '<i class="fa-solid fa-wave-square"></i>';
+    let open = false;
+    vizBtn.addEventListener('click', () => {
+      open = !open;
+      panel.style.display = open ? 'flex' : 'none';
+      vizBtn.classList.toggle('active', open);
+      if (open && !core) {
+        refreshSources();
+        startCore();
+      } else if (!open && core) {
+        core.cleanup(); core = null;
+      }
+    });
+
+    const firstBtn = tb.querySelector('.wm-btn');
+    tb.insertBefore(vizBtn, firstBtn);
+
+    // Cleanup when window closes
+    const prev = win._wmCleanup;
+    win._wmCleanup = () => { core?.cleanup(); core = null; ro.disconnect(); prev?.(); };
+  }
+
+  // ── Audio visualizer window builder ───────────────────────────────────────
+
+  function _buildVizWindow(win, body, opts = {}) {
+    body.style.cssText += 'flex-direction:column;padding:0;overflow:hidden;background:#0d0d1a;';
+
+    const ctrl = document.createElement('div');
+    ctrl.style.cssText = 'display:flex;align-items:center;gap:5px;padding:4px 8px;background:#13131f;border-bottom:1px solid #2a2a3e;flex-shrink:0;';
+
+    const sourceSelect = document.createElement('select');
+    sourceSelect.style.cssText = 'flex:1;min-width:0;font-size:11px;background:#1e1e2e;color:#cdd6f4;border:1px solid #313244;border-radius:3px;padding:2px 4px;';
+
+    const styleSelect = document.createElement('select');
+    styleSelect.style.cssText = 'font-size:11px;background:#1e1e2e;color:#cdd6f4;border:1px solid #313244;border-radius:3px;padding:2px 4px;';
+    for (const s of ['wave', 'bars', 'ring']) {
+      const o = document.createElement('option');
+      o.value = s; o.textContent = s;
+      styleSelect.appendChild(o);
+    }
+
+    ctrl.appendChild(sourceSelect);
+    ctrl.appendChild(styleSelect);
+    body.appendChild(ctrl);
+
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'flex:1;width:100%;min-height:0;display:block;';
+    body.appendChild(canvas);
+
+    new ResizeObserver(() => {
+      canvas.width  = canvas.offsetWidth  * devicePixelRatio;
+      canvas.height = canvas.offsetHeight * devicePixelRatio;
+    }).observe(canvas);
+
+    function refreshSources() {
+      const prev = sourceSelect.value;
+      sourceSelect.innerHTML = '';
+      for (const { id, label } of _buildSourceSelect(win)) {
+        const o = document.createElement('option');
+        o.value = id; o.textContent = label; o.selected = id === prev;
+        sourceSelect.appendChild(o);
+      }
+      if (!sourceSelect.value) sourceSelect.selectedIndex = 0;
+    }
+
+    const core = _createSpectrumCore(canvas, () => styleSelect.value, { autoStart: false });
+
     win._vizSourceEl = sourceSelect;
     win._vizStyleEl  = styleSelect;
 
     sourceSelect.addEventListener('mousedown', refreshSources);
-    sourceSelect.addEventListener('change', () => {
-      connect(sourceSelect.value);
-    });
-    styleSelect.addEventListener('change', () => {
-      if (toneAn) toneAn.type = styleSelect.value === 'wave' ? 'waveform' : 'fft';
-    });
+    sourceSelect.addEventListener('change', () => core.setSource(sourceSelect.value));
+    styleSelect.addEventListener('change', () => core.setStyle(styleSelect.value));
 
     refreshSources();
     const initSrc = opts.source ?? 'master';
     styleSelect.value = opts.style ?? 'wave';
     if ([...sourceSelect.options].some(o => o.value === initSrc)) sourceSelect.value = initSrc;
-    connect(sourceSelect.value);
-    frame();
+    core.setSource(sourceSelect.value);
+    core.start();
 
-    win._wmCleanup = () => { cancelAnimationFrame(rafId); disconnect(); };
+    win._wmCleanup = () => core.cleanup();
   }
 
   // Restore a file-backed window from IndexedDB handle
@@ -1430,6 +1544,22 @@ export function initWM(onContentResize) {
       return api;
     },
 
+    /** Find a window id by its title text. Returns null if not found. */
+    getByTitle(title) {
+      const t = (title ?? '').trim().toLowerCase();
+      const found = [...desktop.querySelectorAll('.wm-win')].find(w =>
+        w.querySelector('.wm-title')?.textContent?.trim().toLowerCase() === t
+      );
+      return found?.id ?? null;
+    },
+
+    /** Set a CSS filter on a window body (e.g. 'brightness(2)' to flash it). Pass null/'' to clear. */
+    filter(id, cssFilter) {
+      const win = getWin(id);
+      if (win) win.querySelector('.wm-body').style.filter = cssFilter ?? '';
+      return api;
+    },
+
     /**
      * Spawn a new floating window.
      * @param {string} title  - Titlebar label
@@ -1572,17 +1702,22 @@ export function initWM(onContentResize) {
       if ((type === 'video' || type === 'html') && opts.audio !== false) {
         const videoEl = type === 'video' ? body.querySelector('video') : null;
         _addAudioControls(win, videoEl);
-        if (videoEl) _addVideoControls(win, videoEl);
+        if (videoEl) {
+          _addVideoControls(win, videoEl);
+          _addVizPanel(win, body, id);
+        }
       }
 
       if (['image','video'].includes(type) && opts.src) _addCopyPathBtn(win, opts.src);
-      if (['image','video','camera','canvas','shader','viz'].includes(type)) _addFlipBtns(win, body);
+      if (['image','video','camera','canvas','shader','viz','html','sensor'].includes(type)) _addFlipBtns(win, body);
       if (opts.noChrome)    win.classList.add('wm-no-chrome');
       if (opts.transparent) win.classList.add('wm-transparent');
 
       if (opts.onClose) win._wmUserOnClose = opts.onClose;
 
       desktop.appendChild(win);
+      win.classList.add('wm-spawning');
+      win.addEventListener('animationend', () => win.classList.remove('wm-spawning'), { once: true });
       spawnedIds.add(id);
       bringToFront(win);
       if (opts.z != null) win.style.zIndex = String(opts.z);

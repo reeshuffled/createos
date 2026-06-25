@@ -130,14 +130,64 @@ class DrawTarget {
 
   // ── Text ──────────────────────────────────────────────────────────────────
 
-  text(str, x, y, size = 24, color = "#fff", { font = "sans-serif", align = "left", baseline = "alphabetic" } = {}) {
+  text(str, x, y, size = 24, color = "#fff", {
+    font      = "sans-serif",
+    align     = "left",
+    baseline  = "alphabetic",
+    weight    = "normal",
+    style     = "normal",
+    stroke    = false,
+    strokeColor = "#000",
+    strokeWidth = 2,
+    shadow    = false,
+    shadowColor = "rgba(0,0,0,0.6)",
+    shadowBlur  = 4,
+    shadowX     = 2,
+    shadowY     = 2,
+    gradient  = null,   // array of CSS colors, top→bottom fill gradient
+  } = {}) {
     const ctx = this.#ctx();
-    ctx.fillStyle = color;
-    ctx.font = `${size}px ${font}`;
+    ctx.font = `${style} ${weight} ${size}px ${font}`;
     ctx.textAlign = align;
     ctx.textBaseline = baseline;
+
+    if (shadow) {
+      ctx.shadowColor   = shadowColor;
+      ctx.shadowBlur    = shadowBlur;
+      ctx.shadowOffsetX = shadowX;
+      ctx.shadowOffsetY = shadowY;
+    }
+
+    if (gradient && gradient.length >= 2) {
+      const met = ctx.measureText(str);
+      const w   = met.width;
+      const h   = size * 1.2;
+      const g   = ctx.createLinearGradient(x, y - h, x, y + h * 0.2);
+      gradient.forEach((c, i) => g.addColorStop(i / (gradient.length - 1), c));
+      ctx.fillStyle = g;
+    } else {
+      ctx.fillStyle = color;
+    }
+
     ctx.fillText(str, x, y);
+
+    if (stroke) {
+      ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth   = strokeWidth;
+      ctx.strokeText(str, x, y);
+    }
+
+    ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
     return this;
+  }
+
+  /** Load a web font by name + URL, returns Promise<name>. */
+  async loadFont(name, url) {
+    const face = new FontFace(name, `url(${url})`);
+    await face.load();
+    document.fonts.add(face);
+    return name;
   }
 
   // ── Image ─────────────────────────────────────────────────────────────────

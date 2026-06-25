@@ -1,4 +1,4 @@
-# Visual Live Coding IDE
+# createos
 
 A live coding environment for creating audiovisual experiences in the browser — shaders, synthesizers, video, and computer vision, all from a single JavaScript editor.
 
@@ -31,6 +31,8 @@ A live coding environment for creating audiovisual experiences in the browser �
 - Infinite loop protection ([Esprima](https://esprima.org/))
 - Friendly runtime error messages
 - Pause / Resume program execution
+- **Auto-execute** (⚡ toolbar toggle) — re-runs code 1s after each edit; syntax-gated so broken code doesn't tear down a running sketch
+- **Share / Embed** — toolbar button encodes the full desktop to a URL (`?embed=1&project=<b64>`); opening it runs the art fullscreen with no editor chrome
 
 ## Known Weird Behavior
 

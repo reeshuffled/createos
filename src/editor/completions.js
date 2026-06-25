@@ -48,6 +48,30 @@ export const TOOLKIT_CATEGORIES = [
         hint: "Center text on canvas using draw.width/draw.height",
       },
       {
+        label: "text stroke",
+        code: "draw.text('OUTLINE', 100, 200, 64, '#fff', { stroke: true, strokeColor: '#000', strokeWidth: 3 });",
+        hint: "Text with outline stroke — stroke:true, strokeColor, strokeWidth",
+        tags: ["text", "stroke", "outline"],
+      },
+      {
+        label: "text shadow",
+        code: "draw.text('Shadow', 100, 200, 64, '#fff', { shadow: true, shadowColor: 'rgba(0,0,0,0.7)', shadowBlur: 8, shadowX: 3, shadowY: 3 });",
+        hint: "Text with drop shadow — shadow:true, shadowColor, shadowBlur, shadowX, shadowY",
+        tags: ["text", "shadow"],
+      },
+      {
+        label: "text gradient",
+        code: "draw.text('GRADIENT', 100, 200, 72, '#fff', { gradient: ['#f0f', '#0ff', '#ff0'], weight: 'bold' });",
+        hint: "Text filled with vertical color gradient — gradient: array of CSS colors top→bottom",
+        tags: ["text", "gradient", "color"],
+      },
+      {
+        label: "load font",
+        code: "await draw.loadFont('Orbitron', 'https://fonts.gstatic.com/s/orbitron/v31/yMJMMIlzdpvBhQQL_SC3X9yhF25-T1nyGy6BoWgz.woff2');\ndraw.text('SPACE', 100, 200, 64, '#0ff', { font: 'Orbitron', weight: 'bold' });",
+        hint: "Load custom font by name + URL (FontFace API), then use with draw.text({ font })",
+        tags: ["font", "text", "custom"],
+      },
+      {
         label: "arc / pie",
         code: "draw.arc(x, y, r, 0, Math.PI, 'orange');",
         hint: "Filled arc/pie slice — x, y, radius, startAngle, endAngle, color",
@@ -839,6 +863,12 @@ audio.start();`,
         hint: ".use(factory) — custom pipeline stage. factory(srcDrawable) called once at start, returns { canvas, read() }. read() called every frame.",
         tags: ["pipe", "use", "custom", "stage", "pipeline", "extensible"],
       },
+      {
+        label: "subtitle overlay",
+        code: "const srt = `1\n00:00:00,000 --> 00:00:02,500\nHello world\n\n2\n00:00:02,500 --> 00:00:05,000\nThis is a subtitle`;\nconst vid = await Media.video('https://example.com/video.mp4');\npipe(vid)\n  .subtitle(srt, { fontSize: 32, color: '#fff', bg: 'rgba(0,0,0,0.7)' })\n  .show('Subtitled Video', { w: 800, h: 500 });",
+        hint: ".subtitle(srtText, opts) — overlays time-synced SRT subtitles. opts: fontSize, color, bg, font, weight, stroke, marginBottom",
+        tags: ["pipe", "subtitle", "srt", "caption", "text", "video"],
+      },
     ],
   },
   {
@@ -950,6 +980,36 @@ audio.start();`,
     name: "Camera & Mic",
     commands: [
       {
+        label: "open camera",
+        code: "const cam = await Camera.open();\n// cam.element = <video>, cam.flip(true) mirrors, cam.stop() releases\nconsole.log(cam.element.videoWidth, cam.element.videoHeight);",
+        hint: "Camera.open({index?, deviceId?}) → CameraStream. .element is the live <video>, .flip(bool) mirrors horizontally, .stop() releases the stream.",
+      },
+      {
+        label: "open camera by index",
+        code: "const cam = await Camera.open({ index: 1 });\n// index 0 = first camera, 1 = second, etc.",
+        hint: "Open a specific camera by index. Use Camera.list() to enumerate all cameras with their indices and deviceIds.",
+      },
+      {
+        label: "list cameras",
+        code: "const cams = await Camera.list();\nconsole.log(cams);\n// [{index, deviceId, label}, ...]",
+        hint: "Camera.list() → array of {index, deviceId, label}. Use deviceId with Camera.open({deviceId}) to target a specific camera.",
+      },
+      {
+        label: "camera → show window",
+        code: "const cam = await Camera.open();\nwm.spawn('Camera Feed', { type: 'camera' });",
+        hint: "Spawn a window showing the toolbar camera feed. Or use Camera.open() and pipe the element yourself.",
+      },
+      {
+        label: "camera → pipeline",
+        code: "const cam = await Camera.open();\npipe(cam).show('Camera Feed');",
+        hint: "Pipe a CameraStream through the render pipeline — chain .ascii(), .pixelate(), .glshader(), .shader() stages before showing.",
+      },
+      {
+        label: "camera → ASCII pipeline",
+        code: "const cam = await Camera.open();\npipe(cam).ascii({ cols: 120, color: '#00ff41', bg: '#000' }).show('ASCII Cam');",
+        hint: "Pipeline from camera through ASCII renderer to a window. Adjust cols, color, bg.",
+      },
+      {
         label: "camera shader",
         code: "ShaderFX.camera('greyscale');",
         hint: "Toolbar camera shader. Effects: greyscale, invert, channel_swap, posterize, scanlines",
@@ -1054,6 +1114,21 @@ audio.start();`,
   {
     name: "Windows",
     commands: [
+      {
+        label: "get window by title",
+        code: "const id = wm.getByTitle('My Window');\nconsole.log(id); // window id string or null",
+        hint: "wm.getByTitle(title) → window id string or null. Case-insensitive exact match on the titlebar text.",
+      },
+      {
+        label: "flash window filter",
+        code: "const id = wm.getByTitle('My Window');\nwm.filter(id, 'brightness(2.5) hue-rotate(30deg)');\nsetTimeout(() => wm.filter(id, ''), 80);",
+        hint: "wm.filter(id, cssFilter) — apply any CSS filter to a window body. Pass '' to clear. Great for drum flashes.",
+      },
+      {
+        label: "drum flash on beat",
+        code: "// Flash a window every time a drum plays\n// First spawn or find your video/image window:\nconst winId = wm.getByTitle('Drum Kit');\n\npat('[bd sd] hh', (val) => {\n  if (!winId) return;\n  if (val === 'bd') {\n    wm.filter(winId, 'brightness(3) saturate(2)');\n    setTimeout(() => wm.filter(winId, ''), 80);\n  }\n}).start();\naudio.start();",
+        hint: "Wire pat() note triggers to wm.filter() to flash a window on each drum hit. Swap the filter for hue-rotate, sepia, invert, etc.",
+      },
       {
         label: "layout",
         code: "wm.layout('split');",

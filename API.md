@@ -18,7 +18,11 @@ draw.poly([[x,y],...], color)              // filled polygon
 draw.rectStroke(x, y, w, h, color, thickness)
 draw.ring(x, y, r, color, thickness)
 draw.line(x1, y1, x2, y2, color, thickness)
-draw.text(str, x, y, size, color, {font, align, baseline}?)
+draw.text(str, x, y, size, color, {font, align, baseline, weight, style,
+          stroke, strokeColor, strokeWidth,
+          shadow, shadowColor, shadowBlur, shadowX, shadowY,
+          gradient}?)                         // gradient: array of CSS colors top→bottom
+draw.loadFont(name, url)                    // async — FontFace API, await before draw.text
 draw.image(img, x, y, w?, h?)
 draw.push() / draw.pop()                   // save/restore transform+alpha+blend
 draw.translate(x, y) / draw.rotate(rad) / draw.scale(x, y?)
@@ -253,6 +257,36 @@ const fft = audio.analyser(32)          // s.chain(fft) → fft.getValue() retur
 const lfo = audio.lfo(freq, min, max)   // lfo.connect(s._.frequency)
 ```
 
+### Audio files
+
+```js
+const f = await audio.load(url)         // → AudioFile; await f.ready
+const f = await audio.upload()          // file picker → AudioFile
+f.play(offset?) / f.pause() / f.stop() / f.seek(t) / f.loop(bool) / f.volume(db)
+f.currentTime / f.duration / f.state   // live getters
+f.filter(type,freq,Q).reverb(decay).eq(lo,mid,hi).delay(t,fb).pitchShift(semi).distort(amt)
+f.onTime(t, fn)                         // callback at playback position t (seconds)
+f.waveform({ width, height, color, bg }) // → HTMLCanvasElement with live playhead
+f.signal(bins)                          // → live FFT signal { bass, mid, high, stream(fn) }
+```
+
+### Master FFT — `audio.fft`
+
+```js
+audio.fft.bass / audio.fft.mid / audio.fft.high  // energy bands 0–1
+audio.fft.value                                   // dominant bin
+audio.fft.fft                                     // Float32Array raw bins
+audio.fft.stream(fn)                              // RAF push
+```
+
+### Visualizers
+
+```js
+const sg   = audio.spectrogram(source, { palette, width, height })  // → { canvas }
+const roll = audio.pianoRoll({ z, opacity, speed, midiMin, midiMax })
+const eq   = audio.eqWidget({ x, y })  // eq.low/mid/high(dB); synth.chain(eq)
+```
+
 ### Microphone
 
 ```js
@@ -260,7 +294,8 @@ const mic = await audio.mic()           // prompts permission; connect to fx or 
 audio.level                             // live 0–1 RMS (mic toolbar toggle must be on)
 audio.onLevel(threshold, onEnter, onExit?)   // edge-trigger
 audio.onWord(word, fn) / audio.onSpeech(fn)  // Web Speech API (Chrome/Edge)
-audio.say(text, opts?)                       // speechSynthesis
+audio.say(text, opts?)                       // speechSynthesis; opts: voice,rate,pitch,volume,lang
+audio.voices()                               // → SpeechSynthesisVoice[]
 ```
 
 ---
@@ -308,6 +343,14 @@ pipe(cam)
 
 .shader(fragBody, { z, opacity })
   // WebGPU/WGSL stage. Same syntax as new Shader(body).
+
+.subtitle(srtText, {
+    fontSize, color, bg, font, weight,
+    stroke, strokeColor, strokeWidth, marginBottom
+  })
+  // SRT subtitle overlay. Parses the SRT string and draws the active cue on each frame,
+  // synced to source.currentTime. Use with a video source.
+  // srtText format: "1\n00:00:00,000 --> 00:00:02,500\nHello world\n\n2\n..."
 
 .use(factory)
   // Custom stage escape hatch. factory(srcDrawable) called once at start; returns
@@ -536,18 +579,20 @@ wm.maximize(id) / wm.restore(id) / wm.close(id)
 wm.move(id, x, y) / wm.resize(id, w, h)
 wm.setZ(id, z)          // live CSS z-index update
 wm.setOpacity(id, v)    // live CSS opacity (0–1)
+wm.filter(id, cssStr)   // CSS filter on .wm-body: 'brightness(2) hue-rotate(30deg)'; '' to clear
+wm.getByTitle(title)    // → window id or null (case-insensitive title match)
 wm.layout('split')
-wm.list()   // → all window ids
+wm.list()               // → all window ids
 
 wm.spawn(title, opts)   // → id
 // opts.type: 'html'|'image'|'video'|'camera'|'canvas'|'shader'|'viz'|'sensor'
 // opts: x,y,w,h,id + type-specific: html,src,loop,controls,z,shader
-// opts.noChrome: true → start without titlebar
-// opts.transparent: true → start in transparent mode
+// opts.noChrome: true → hide titlebar
+// opts.transparent: true → semi-transparent background
 // opts.z: number → initial CSS z-index
 // opts.onClose: fn → called when window is closed (e.g. stopRunning)
-// Video windows: default size 320×240; ⟳ sync button syncs currentTime with all other videos
-// Image/video windows: clipboard icon copies URL to clipboard
+// Video windows: ⟳ sync button; ♪ button folds out spectrum/waveform panel (source+style selectors)
+// Image/video/html/sensor windows: ↔/↕ flip buttons apply scale() transform to body
 // Sensor windows: opts.source = 'motion'|'gamepad'|'geo'|'battery' — live gauge/bar displays
 wm.spawn('Motion', { type: 'sensor', source: 'motion', w: 480, h: 200 })
 wm.spawn('Gamepad', { type: 'sensor', source: 'gamepad', w: 380, h: 200 })
@@ -556,6 +601,14 @@ wm.pickFile(key, pickerOpts?)   // async → blob URL (cached by key, re-prompts
 ```
 
 Built-in ids: `win-editor` `win-canvas` `win-console` `win-toolkit` `win-camera` `win-mic`
+
+### Embed / share
+
+App toolbar ⇒ **⇒ share** button serializes the full desktop (all editors + layout) and copies:
+```
+https://your-host/?embed=1&project=<base64>
+```
+Loading this URL runs the art fullscreen — editor chrome hidden, canvas fills viewport, user-spawned windows at saved positions. Single-editor variant: `?embed=1&code=<base64>`.
 
 ---
 

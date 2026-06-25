@@ -534,68 +534,215 @@ export class PianoRollViz {
   }
 }
 
-// ── EQWidget (#10) ────────────────────────────────────────────────────────────
-// Floating 3-band EQ panel. Acts as a Tone-compatible node for .chain().
-// Usage: const eq = audio.eqWidget(); synth.chain(eq);
+// ── EQWidget — deep version: live spectrum + draggable EQ curve ───────────────
+// Spawns a WM window showing FFT bars with an overlaid 3-band EQ response curve.
+// Draggable handles (Low ~250Hz / Mid ~2.5kHz / High ~8kHz) control Tone.EQ3.
+// Tone-compatible: synth.chain(eq) works.
 export class EQWidget {
-  constructor({ title = 'EQ', x = 20, y = null } = {}) {
-    this._eq  = new Tone.EQ3(0, 0, 0);
-    this._el  = null;
-    this._inputs = {};
-    this._vals   = {};
-    this._init(title, x, y);
+  constructor({ title = 'EQ', x, y, w = 420, h = 220 } = {}) {
+    this._eq       = new Tone.EQ3(0, 0, 0);
+    this._bands    = { low: 0, mid: 0, high: 0 };
+    this._analyser = null;
+    this._rafId    = null;
+    this._canvas   = null;
+    this._winId    = null;
+    this._drag     = null; // { band, startY, startDb }
+    this._init(title, x, y, w, h);
     _vizs.push(this);
   }
 
-  _init(title, x, yOpt) {
-    const el = document.createElement('div');
-    el.className = 'ar-eq-widget';
-    const bottom = yOpt !== null ? `bottom:${yOpt ?? 20}px` : 'bottom:20px';
-    el.style.cssText = `position:fixed;${bottom};left:${x}px;background:#1a1a2e;border:1px solid #444;border-radius:8px;padding:10px 14px;z-index:9999;font-family:monospace;font-size:12px;color:#ccc;user-select:none;pointer-events:all;`;
+  _init(title, x, y, w, h) {
+    if (!window.wm) return;
+    this._winId = window.wm.spawn(title || 'EQ', {
+      type: 'html', html: '', w, h, audio: false,
+      ...(x != null ? { x } : {}), ...(y != null ? { y } : {}),
+    });
+    const win  = document.getElementById(this._winId);
+    const body = win?.querySelector('.wm-body');
+    if (!body) return;
 
-    const hdr = document.createElement('div');
-    hdr.textContent = title;
-    hdr.style.cssText = 'font-weight:bold;color:#fff;margin-bottom:8px;font-size:11px;text-transform:uppercase;letter-spacing:1px;';
-    el.appendChild(hdr);
+    body.style.cssText += 'background:#0d0d1a;overflow:hidden;padding:0;';
 
-    for (const [key, label, freq] of [['low','Low','80 Hz'], ['mid','Mid','1 kHz'], ['high','High','10 kHz']]) {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;';
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'width:100%;height:100%;display:block;cursor:ns-resize;';
+    body.appendChild(canvas);
+    this._canvas = canvas;
 
-      const lbl = document.createElement('span');
-      lbl.style.cssText = 'width:44px;text-align:right;color:#888;font-size:10px;';
-      lbl.title = freq;
-      lbl.textContent = label;
+    const ro = new ResizeObserver(() => {
+      canvas.width  = canvas.offsetWidth  * devicePixelRatio;
+      canvas.height = canvas.offsetHeight * devicePixelRatio;
+    });
+    ro.observe(canvas);
 
-      const inp = document.createElement('input');
-      inp.type = 'range'; inp.min = '-12'; inp.max = '12'; inp.step = '0.5'; inp.value = '0';
-      inp.style.cssText = 'width:90px;accent-color:#6366f1;cursor:pointer;';
+    this._analyser = new Tone.Analyser({ type: 'fft', size: 256 });
+    try { this._eq.connect(this._analyser); } catch (_) {}
 
-      const val = document.createElement('span');
-      val.style.cssText = 'width:36px;font-size:10px;color:#aaa;';
-      val.textContent = '0 dB';
+    this._setupDrag(canvas);
+    this._drawLoop();
 
-      inp.addEventListener('input', () => {
-        const db = parseFloat(inp.value);
-        val.textContent = `${db > 0 ? '+' : ''}${db}dB`;
-        try { this._eq[key].value = db; } catch (_) {}
-      });
+    if (win) win._wmCleanup = () => this._destroyCore();
+  }
 
-      row.appendChild(lbl); row.appendChild(inp); row.appendChild(val);
-      el.appendChild(row);
-      this._inputs[key] = inp;
-      this._vals[key]   = val;
-    }
+  // Frequency → X pixel (log scale 20Hz–20kHz)
+  _freqToX(f, W) { return Math.log10(f / 20) / Math.log10(1000) * W; }
+  // Gain (dB) → Y pixel (±12dB range)
+  _dbToY(db, H) { return H / 2 - (db / 12) * (H / 2); }
 
-    document.body?.appendChild(el);
-    this._el = el;
+  // Approximate EQ3 response at frequency f given low/mid/high band gains
+  _curveAt(f, W, H) {
+    const { low, mid, high } = this._bands;
+    // Low shelf <400Hz, High shelf >2500Hz, Mid peak around 2500Hz
+    let gain = 0;
+    if (f < 400)        gain += low  * Math.max(0, 1 - f / 400);
+    else if (f < 800)   gain += low  * Math.max(0, (800 - f) / 400) * 0.3;
+    if (f > 2500)       gain += high * Math.min(1, (f - 2500) / 2500);
+    else if (f > 1500)  gain += high * Math.min(1, (f - 1500) / 1000) * 0.3;
+    // Mid peak
+    const midFreq = 2500, midBW = 2.0;
+    const midGain = mid * Math.exp(-0.5 * Math.pow(Math.log2(f / midFreq) / midBW, 2));
+    gain += midGain;
+    return this._dbToY(Math.max(-12, Math.min(12, gain)), H);
+  }
+
+  _drawLoop() {
+    const draw = () => {
+      this._rafId = requestAnimationFrame(draw);
+      const canvas = this._canvas;
+      if (!canvas) return;
+      const W = canvas.width, H = canvas.height;
+      if (!W || !H) return;
+      const ctx = canvas.getContext('2d');
+
+      // Background
+      ctx.fillStyle = '#0d0d1a';
+      ctx.fillRect(0, 0, W, H);
+
+      // Grid lines (frequency decades + 0dB)
+      ctx.strokeStyle = '#1e1e2e';
+      ctx.lineWidth = 1;
+      for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) {
+        const x = this._freqToX(f, W);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      }
+      ctx.strokeStyle = '#2a2a3e'; ctx.lineWidth = 1;
+      const y0 = this._dbToY(0, H);
+      ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(W, y0); ctx.stroke();
+
+      // FFT bars (log-mapped, gradient)
+      if (this._analyser) {
+        const raw = this._analyser.getValue();
+        const bins = raw.length;
+        const nyq  = Tone.getContext().sampleRate / 2;
+        for (let i = 1; i < bins; i++) {
+          const f1 = (i - 1) / bins * nyq, f2 = i / bins * nyq;
+          if (f1 < 20 || f2 > 20000) continue;
+          const x1 = this._freqToX(Math.max(20, f1), W);
+          const x2 = this._freqToX(Math.min(20000, f2), W);
+          const v  = Math.max(0, Math.min(1, (raw[i] + 90) / 90));
+          ctx.fillStyle = `hsla(${200 + v * 60},70%,${20 + v * 40}%,0.8)`;
+          ctx.fillRect(x1, H - v * H, Math.max(1, x2 - x1), v * H);
+        }
+      }
+
+      // EQ curve
+      ctx.beginPath();
+      ctx.strokeStyle = '#f5c542';
+      ctx.lineWidth = 2 * devicePixelRatio;
+      let first = true;
+      for (let px = 0; px <= W; px += 2) {
+        const f = 20 * Math.pow(1000, px / W);
+        const y = this._curveAt(f, W, H);
+        first ? ctx.moveTo(px, y) : ctx.lineTo(px, y);
+        first = false;
+      }
+      ctx.stroke();
+
+      // Fill under curve
+      ctx.lineTo(W, y0); ctx.lineTo(0, y0); ctx.closePath();
+      ctx.fillStyle = 'rgba(245,197,66,0.08)';
+      ctx.fill();
+
+      // Band handles
+      const handles = [
+        { band: 'low',  f: 250,  color: '#89dceb' },
+        { band: 'mid',  f: 2500, color: '#cba6f7' },
+        { band: 'high', f: 8000, color: '#f38ba8' },
+      ];
+      for (const h of handles) {
+        const hx = this._freqToX(h.f, W);
+        const hy = this._curveAt(h.f, W, H);
+        ctx.beginPath();
+        ctx.arc(hx, hy, 7 * devicePixelRatio, 0, Math.PI * 2);
+        ctx.fillStyle = h.color;
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5 * devicePixelRatio;
+        ctx.stroke();
+        // Label
+        const db = this._bands[h.band];
+        ctx.fillStyle = '#fff';
+        ctx.font = `${9 * devicePixelRatio}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText(`${db > 0 ? '+' : ''}${db}dB`, hx, hy - 12 * devicePixelRatio);
+      }
+    };
+    draw();
+  }
+
+  _setupDrag(canvas) {
+    const HANDLES = [
+      { band: 'low',  f: 250  },
+      { band: 'mid',  f: 2500 },
+      { band: 'high', f: 8000 },
+    ];
+
+    canvas.addEventListener('mousedown', e => {
+      const rect = canvas.getBoundingClientRect();
+      const mx = (e.clientX - rect.left) * devicePixelRatio;
+      const my = (e.clientY - rect.top)  * devicePixelRatio;
+      const W = canvas.width, H = canvas.height;
+
+      for (const h of HANDLES) {
+        const hx = this._freqToX(h.f, W);
+        const hy = this._curveAt(h.f, W, H);
+        if (Math.hypot(mx - hx, my - hy) < 14 * devicePixelRatio) {
+          this._drag = { band: h.band, startY: e.clientY, startDb: this._bands[h.band] };
+          e.preventDefault();
+          break;
+        }
+      }
+    });
+
+    const onMove = e => {
+      if (!this._drag) return;
+      const { band, startY, startDb } = this._drag;
+      const dPx  = startY - e.clientY;
+      const dDb  = dPx / (canvas.getBoundingClientRect().height / 24);
+      const db   = Math.max(-12, Math.min(12, Math.round((startDb + dDb) * 2) / 2));
+      this._bands[band] = db;
+      try { this._eq[band].value = db; } catch (_) {}
+    };
+
+    const onUp = () => { this._drag = null; };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
+    this._dragCleanup = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup',   onUp);
+    };
+  }
+
+  _destroyCore() {
+    cancelAnimationFrame(this._rafId);
+    this._rafId = null;
+    this._dragCleanup?.();
+    try { this._analyser?.dispose(); } catch (_) {}
+    this._analyser = null;
   }
 
   _setband(key, db) {
-    const inp = this._inputs[key];
-    const val = this._vals[key];
-    if (inp) inp.value = db;
-    if (val) val.textContent = `${db > 0 ? '+' : ''}${db}dB`;
+    this._bands[key] = db;
     try { this._eq[key].value = db; } catch (_) {}
     return this;
   }
@@ -604,17 +751,18 @@ export class EQWidget {
   mid(db)  { return this._setband('mid',  db); }
   high(db) { return this._setband('high', db); }
 
-  // Tone-compatible interface so synth.chain(eqWidget) works
   connect(dest)   { try { this._eq.connect(dest);   } catch (_) {} return this; }
   disconnect()    { try { this._eq.disconnect();     } catch (_) {} return this; }
   toDestination() { try { this._eq.toDestination();  } catch (_) {} return this; }
   chain(...nodes) { try { this._eq.chain(...nodes);  } catch (_) {} return this; }
 
-  hide() { if (this._el) this._el.style.display = 'none'; return this; }
-  show() { if (this._el) this._el.style.display = '';     return this; }
+  hide() { const w = document.getElementById(this._winId); if (w) w.style.display = 'none'; return this; }
+  show() { const w = document.getElementById(this._winId); if (w) w.style.display = '';     return this; }
 
   _destroy() {
-    this._el?.remove();
+    this._destroyCore();
+    const w = document.getElementById(this._winId);
+    if (w && w.isConnected) w.querySelector('.wm-close')?.click();
     try { this._eq.dispose(); } catch (_) {}
   }
 }

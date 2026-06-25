@@ -631,6 +631,23 @@ Blockly.defineBlocksWithJsonArray([
     tooltip: 'Draw text on the canvas',
   },
   {
+    type: 'draw_text_rich',
+    message0: 'text %1 at x %2 y %3 size %4 color %5 stroke %6 shadow %7',
+    args0: [
+      { type: 'field_input', name: 'STR', text: 'hello' },
+      { type: 'field_number', name: 'X', value: 100 },
+      { type: 'field_number', name: 'Y', value: 200 },
+      { type: 'field_number', name: 'SIZE', value: 48, min: 1 },
+      { type: 'field_input', name: 'COLOR', text: 'white' },
+      { type: 'field_checkbox', name: 'STROKE', checked: false },
+      { type: 'field_checkbox', name: 'SHADOW', checked: true },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 60,
+    tooltip: 'Draw styled text — optional stroke outline and drop shadow',
+  },
+  {
     type: 'draw_alpha',
     message0: 'draw transparency %1',
     args0: [{ type: 'field_number', name: 'ALPHA', value: 0.5, min: 0, max: 1 }],
@@ -1551,6 +1568,15 @@ javascriptGenerator.forBlock['draw_text'] = (b) => {
   const color = b.getFieldValue('COLOR');
   return `draw.text(${JSON.stringify(str)}, ${x}, ${y}, ${size}, ${JSON.stringify(color)});\n`;
 };
+javascriptGenerator.forBlock['draw_text_rich'] = (b) => {
+  const str    = b.getFieldValue('STR');
+  const [x, y, size] = ['X', 'Y', 'SIZE'].map(f => b.getFieldValue(f));
+  const color  = b.getFieldValue('COLOR');
+  const stroke = b.getFieldValue('STROKE') === 'TRUE';
+  const shadow = b.getFieldValue('SHADOW') === 'TRUE';
+  const opts   = { stroke, shadow };
+  return `draw.text(${JSON.stringify(str)}, ${x}, ${y}, ${size}, ${JSON.stringify(color)}, ${JSON.stringify(opts)});\n`;
+};
 javascriptGenerator.forBlock['draw_alpha'] = (b) =>
   `draw.alpha(${b.getFieldValue('ALPHA')});\n`;
 javascriptGenerator.forBlock['draw_reset'] = () => `draw.reset();\n`;
@@ -2025,6 +2051,30 @@ javascriptGenerator.forBlock['pipe_pixelate_camera'] = (b) => {
   return `const _cam${idx} = await Camera.open({ index: ${idx} });\npipe(_cam${idx}).pixelate({ blockSize: ${block} }).show(${title}, { w: ${w}, h: ${h} });\n`;
 };
 
+Blockly.defineBlocksWithJsonArray([
+  {
+    type: 'pipe_subtitle_video',
+    message0: 'pipe video URL %1 subtitles (SRT) %2 font size %3 → window %4',
+    args0: [
+      { type: 'field_input',          name: 'URL',   text: 'https://example.com/video.mp4' },
+      { type: 'field_multilinetext',  name: 'SRT',   text: '1\n00:00:00,000 --> 00:00:02,500\nHello world' },
+      { type: 'field_number',         name: 'SIZE',  value: 28, min: 8 },
+      { type: 'field_input',          name: 'TITLE', text: 'Subtitled Video' },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 80,
+    tooltip: 'Play a video with SRT subtitle overlay via the render pipeline',
+  },
+]);
+javascriptGenerator.forBlock['pipe_subtitle_video'] = (b) => {
+  const url   = JSON.stringify(b.getFieldValue('URL'));
+  const srt   = JSON.stringify(b.getFieldValue('SRT'));
+  const size  = b.getFieldValue('SIZE');
+  const title = JSON.stringify(b.getFieldValue('TITLE'));
+  return `const _vid = await Media.video(${url});\npipe(_vid).subtitle(${srt}, { fontSize: ${size} }).show(${title}, { w: 800, h: 520 });\n`;
+};
+
 // ASCII Animation
 javascriptGenerator.forBlock['ascii_play'] = (b) => {
   const f1  = JSON.stringify(b.getFieldValue('F1'));
@@ -2212,6 +2262,7 @@ export const TOOLBOX = {
         { kind: 'block', type: 'draw_rect_stroke' },
         { kind: 'block', type: 'draw_line' },
         { kind: 'block', type: 'draw_text' },
+        { kind: 'block', type: 'draw_text_rich' },
         { kind: 'block', type: 'canvas_clear' },
         { kind: 'block', type: 'draw_alpha' },
         { kind: 'block', type: 'draw_reset' },
@@ -2288,6 +2339,7 @@ export const TOOLBOX = {
         },
         { kind: 'block', type: 'pipe_camera_glshader' },
         { kind: 'block', type: 'pipe_pixelate_camera' },
+        { kind: 'block', type: 'pipe_subtitle_video' },
       ],
     },
     {

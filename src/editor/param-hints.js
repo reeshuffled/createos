@@ -89,7 +89,7 @@ export const PARAM_HINTS = {
 
 // ── AST helpers ───────────────────────────────────────────────────────────────
 
-function calleePath(node) {
+export function calleePath(node) {
   if (!node) return null;
   if (node.type === 'Identifier') return node.name;
   if (node.type === 'MemberExpression' && !node.computed) {

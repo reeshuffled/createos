@@ -32,7 +32,7 @@ import { midi, cleanupMidi } from "../api/midi.js";
 import { external, cleanupExternal } from "../api/external.js";
 import { statusBar, cleanupStatusBar } from "../api/status-bar.js";
 import { EditorInstance } from "../editor/editor-instance.js";
-import { saveProject, loadProject } from "../api/project.js";
+import { saveProject, loadProject, serializeProject, applyProject } from "../api/project.js";
 
 // ── Capture native timer/event functions before any user-code patching ────────
 const _nativeSetInterval  = window.setInterval.bind(window);
@@ -127,6 +127,40 @@ EventTarget.prototype.addEventListener = function(type, handler, options) {
 };
 
 preloadVision();
+
+// ── Embed / viewer mode ─────────────────────────────────────────────────────
+const _embedParams  = new URLSearchParams(location.search);
+const _isEmbed      = _embedParams.has('embed');
+const _embedCode    = (() => {
+  const raw = _embedParams.get('code');
+  if (!raw) return null;
+  try { return decodeURIComponent(atob(raw)); } catch (_) { return null; }
+})();
+const _embedProject = (() => {
+  const raw = _embedParams.get('project');
+  if (!raw) return null;
+  try { return JSON.parse(decodeURIComponent(atob(raw))); } catch (_) { return null; }
+})();
+
+if (_isEmbed) {
+  document.body.classList.add('ar-embed');
+  if (_embedProject) {
+    // Full project embed: restore each editor's code into localStorage so the
+    // normal manifest-restore loop picks them up, then applyProject() after init.
+    const editorEntries = (_embedProject.windows ?? []).filter(w => w.type === 'editor');
+    const ids = editorEntries.map(w => w.editorId);
+    editorEntries.forEach(w => {
+      try { localStorage.setItem(`vl-ide-code-${w.editorId}`, w.code ?? ''); } catch (_) {}
+    });
+    if (ids.length > 0) {
+      try { localStorage.setItem('vl-ide-editors', JSON.stringify(ids)); } catch (_) {}
+    }
+  } else if (_embedCode) {
+    // Single-code embed: slot 1 only
+    try { localStorage.setItem('vl-ide-code-1', _embedCode); } catch (_) {}
+    try { localStorage.setItem('vl-ide-editors', JSON.stringify([1])); } catch (_) {}
+  }
+}
 
 window.onload = () => {
   // ── Signal routing table — reset on each run by cleanupSignalGraph() ──────
@@ -435,14 +469,24 @@ window.onload = () => {
 
   window.wm.restoreState();
 
-  // Auto-execute editors that were running/paused before refresh
-  for (const id of manifest) {
-    const state = localStorage.getItem(`vl-ide-exec-${id}`);
-    if (state === 'running' || state === 'paused') {
-      const inst = window.__ar_instances.get(id);
-      if (inst) {
-        inst.execute();
-        if (state === 'paused') setTimeout(() => inst.pauseRunning(), 200);
+  // Embed mode: restore project state (if full project) then auto-run all editors
+  if (_isEmbed) {
+    (async () => {
+      if (_embedProject) {
+        await applyProject(_embedProject, window.wm, window.__ar_instances, appAPI);
+      }
+      window.__ar_instances.forEach(inst => inst.execute());
+    })();
+  } else {
+    // Auto-execute editors that were running/paused before refresh
+    for (const id of manifest) {
+      const state = localStorage.getItem(`vl-ide-exec-${id}`);
+      if (state === 'running' || state === 'paused') {
+        const inst = window.__ar_instances.get(id);
+        if (inst) {
+          inst.execute();
+          if (state === 'paused') setTimeout(() => inst.pauseRunning(), 200);
+        }
       }
     }
   }
@@ -510,6 +554,19 @@ window.onload = () => {
           else if (folderData.fallback) window.wm.registerFolderFallback(iconId, folderData.fallback);
           window.wm.browse(iconId, null, { x: cx, y: cy }).catch(() => {});
         }},
+        { icon: 'fa-wave-square', label: 'New Visualizer', action() {
+          const offset = (_vizCount++ % 8) * 24;
+          window.wm.spawn('Visualizer', { type: 'viz', w: 400, h: 240, x: cx + offset, y: cy + offset });
+        }},
+        { icon: 'fa-toolbox', label: 'New Toolkit', action() {
+          const id = ++toolkitIdCounter;
+          const win = createToolkit(id);
+          const w = 200, h = 500;
+          win.style.cssText += `;left:${Math.min(cx, window.innerWidth - w - 10)}px;top:${Math.min(cy, window.innerHeight - h - 44)}px;width:${w}px;height:${h}px;display:flex;`;
+        }},
+        { icon: 'fa-play', label: 'Run All Editors', action() {
+          window.__ar_instances.forEach(inst => inst.execute());
+        }},
       ];
 
       items.forEach(({ icon, label, action }) => {
@@ -542,6 +599,11 @@ window.onload = () => {
     const x = Math.min(offset + 30, dw - w - 10);
     const y = Math.min(offset + 30, dh - h - 44);
     win.style.cssText += `;left:${x}px;top:${y}px;width:${w}px;height:${h}px;display:flex;`;
+  });
+
+  // ── "Run All" button ──────────────────────────────────────────────────────
+  document.getElementById('runAllBtn')?.addEventListener('click', () => {
+    window.__ar_instances.forEach(inst => inst.execute());
   });
 
   // ── "New Visualizer" button ────────────────────────────────────────────────
@@ -669,6 +731,16 @@ window.onload = () => {
 
   document.getElementById('saveProjectBtn')?.addEventListener('click', () =>
     saveProject(window.wm, window.__ar_instances));
+
+  document.getElementById('shareProjectBtn')?.addEventListener('click', () => {
+    const data = serializeProject(window.wm, window.__ar_instances);
+    const b64  = btoa(encodeURIComponent(JSON.stringify(data)));
+    const url  = `${location.origin}${location.pathname}?embed=1&project=${b64}`;
+    navigator.clipboard?.writeText(url).then(() => {
+      const btn = document.getElementById('shareProjectBtn');
+      if (btn) { btn.style.color = '#4f4'; _nativeSetTimeout(() => { btn.style.color = ''; }, 1500); }
+    }).catch(() => { prompt('Copy embed URL:', url); });
+  });
 
   document.getElementById('loadProjectBtn')?.addEventListener('click', () =>
     loadProject(window.wm, window.__ar_instances, appAPI));

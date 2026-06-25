@@ -47,10 +47,31 @@ draw.polyStroke([[x1,y1],[x2,y2]], color, thickness, closed)
 
 ```js
 draw.text(str, x, y, size, color)
-draw.text(str, x, y, size, color, { font: 'monospace', align: 'center', baseline: 'middle' })
-// align: 'left' | 'center' | 'right'
-// baseline: 'alphabetic' | 'middle' | 'top' | 'bottom'
+draw.text(str, x, y, size, color, {
+  font:        'monospace',          // font family
+  align:       'center',             // 'left' | 'center' | 'right'
+  baseline:    'middle',             // 'alphabetic' | 'middle' | 'top' | 'bottom'
+  weight:      'bold',               // CSS font-weight
+  style:       'italic',             // CSS font-style
+  stroke:      true,                 // add outline
+  strokeColor: '#000',               // outline color
+  strokeWidth: 3,                    // outline width (px)
+  shadow:      true,                 // drop shadow
+  shadowColor: 'rgba(0,0,0,0.6)',    // shadow color
+  shadowBlur:  8,                    // shadow blur radius
+  shadowX:     3, shadowY: 3,        // shadow offset
+  gradient:    ['#f0f', '#0ff'],     // vertical gradient fill (top→bottom array of colors)
+})
 ```
+
+Load a web font (FontFace API) before using it:
+
+```js
+await draw.loadFont('Orbitron', 'https://fonts.gstatic.com/s/orbitron/v31/yMJMMIlzdpvBhQQL_SC3X9yhF25-T1nyGy6BoWgz.woff2');
+draw.text('SPACE', 400, 300, 64, '#0ff', { font: 'Orbitron', weight: 'bold' });
+```
+
+`draw.loadFont(name, url)` returns a Promise — `await` it before drawing.
 
 ### Images
 
@@ -359,6 +380,7 @@ Chain visual stages from any source. One shared raf loop — no `captureWindow`,
 | CSS FX | `.fx(cssFilter)` | Any CSS filter string: `'blur(4px)'`, `'hue-rotate(90deg)'`, `'invert(1)'`, etc. |
 | GLShader | `.glshader(body, { z, opacity })` | WebGL/GLSL stage. `uVideo` samples upstream canvas. Works in all browsers. |
 | Shader | `.shader(body, { z, opacity })` | WebGPU/WGSL stage. Chrome 113+ / Safari 18+. |
+| Subtitle | `.subtitle(srtText, opts)` | Overlay SRT-format captions synced to `source.currentTime`. opts: `fontSize`, `color`, `bg`, `font`, `weight`, `stroke`, `strokeColor`, `marginBottom`. |
 | Custom | `.use(factory)` | Escape hatch. `factory(srcDrawable)` called once at start, returns `{ canvas, read() }`. `read()` called every frame. |
 
 Stages can be chained arbitrarily. Shader stages self-raf; canvas stages are driven by the shared loop. Shader stages work as terminal **or** intermediate (downstream samples the shader canvas).
@@ -399,6 +421,20 @@ pipe(cam).pixelate({ blockSize: 20 }).fx('hue-rotate(120deg)').show('Retro', { w
 
 // Render to canvas layer (no window)
 pipe(cam).ascii({ cols: 80 }).layer(2);
+
+// SRT subtitle overlay on a video
+const srt = `1
+00:00:00,000 --> 00:00:02,500
+Hello world
+
+2
+00:00:02,500 --> 00:00:05,000
+This is a subtitle`;
+
+const vid = await Media.video('https://example.com/video.mp4');
+pipe(vid)
+  .subtitle(srt, { fontSize: 32, color: '#fff', bg: 'rgba(0,0,0,0.7)' })
+  .show('Subtitled', { w: 800, h: 520 });
 ```
 
 ### Custom stages — `pipe.register(name, factory, descriptor)`

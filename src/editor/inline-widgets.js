@@ -1,6 +1,7 @@
 import esprima from 'esprima';
 import { EditorView, Decoration, WidgetType, ViewPlugin } from '@codemirror/view';
 import { StateField, StateEffect, RangeSetBuilder } from '@codemirror/state';
+import { PARAM_HINTS, calleePath } from './param-hints.js';
 
 // ── Color utilities ───────────────────────────────────────────────────────────
 
@@ -161,6 +162,27 @@ function getColorPopup() {
 
 const setWidgetsEffect = StateEffect.define();
 const setGhostEffect   = StateEffect.define();
+const setInlayEffect   = StateEffect.define();
+
+export const toggleInlayHintsEffect = StateEffect.define();
+
+export const inlayHintsEnabledField = StateField.define({
+  create: () => false,
+  update(enabled, tr) {
+    for (const e of tr.effects) if (e.is(toggleInlayHintsEffect)) return e.value;
+    return enabled;
+  },
+});
+
+export const inlayField = StateField.define({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) if (e.is(setInlayEffect)) deco = e.value;
+    return deco;
+  },
+  provide: f => EditorView.decorations.from(f),
+});
 
 export const widgetsField = StateField.define({
   create: () => Decoration.none,
@@ -288,6 +310,18 @@ export class ScrubWidget extends WidgetType {
   }
 }
 
+class InlayHintWidget extends WidgetType {
+  constructor(label) { super(); this.label = label; }
+  eq(other) { return this.label === other.label; }
+  toDOM() {
+    const span = document.createElement('span');
+    span.className = 'ar-inlay-hint';
+    span.textContent = this.label + ':';
+    return span;
+  }
+  ignoreEvent() { return true; }
+}
+
 class GhostSwatchWidget extends WidgetType {
   constructor(insertAt) { super(); this.insertAt = insertAt; }
   eq(other) { return this.insertAt === other.insertAt; }
@@ -316,6 +350,47 @@ class GhostSwatchWidget extends WidgetType {
 }
 
 // ── AST-based decoration builders ─────────────────────────────────────────────
+
+function buildInlayDecorations(code) {
+  let ast;
+  try { ast = esprima.parseScript(code, { range: true, tolerant: true }); }
+  catch (_) { return Decoration.none; }
+
+  const items = [];
+
+  function visitCall(node) {
+    const callee = node.callee;
+    const path = calleePath(callee);
+    if (!path) return;
+    const params = PARAM_HINTS[path];
+    if (!params) return;
+    for (let i = 0; i < node.arguments.length; i++) {
+      const paramName = params[i];
+      if (!paramName || paramName.endsWith('?') && node.arguments.length <= i) continue;
+      const label = paramName.replace(/\?$/, '');
+      const arg = node.arguments[i];
+      items.push({
+        from: arg.range[0],
+        deco: Decoration.widget({ widget: new InlayHintWidget(label), side: -1 }),
+      });
+    }
+  }
+
+  function walk(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'CallExpression' || node.type === 'NewExpression') visitCall(node);
+    for (const v of Object.values(node)) {
+      if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === 'object' && v.type) walk(v);
+    }
+  }
+
+  walk(ast);
+  items.sort((a, b) => a.from - b.from);
+  const builder = new RangeSetBuilder();
+  for (const { from, deco } of items) builder.add(from, from, deco);
+  return builder.finish();
+}
 
 function buildWidgetDecorations(code, setDragging) {
   let ast;
@@ -392,7 +467,10 @@ export const inlineWidgetsPlugin = ViewPlugin.fromClass(class {
 
   update(update) {
     if (this._destroyed || this._dragging) return;
-    if (update.docChanged) {
+    const inlayToggled = update.transactions.some(tr =>
+      tr.effects.some(e => e.is(toggleInlayHintsEffect))
+    );
+    if (update.docChanged || inlayToggled) {
       clearTimeout(this._rebounce);
       this._rebounce = setTimeout(() => this._rebuildWidgets(), 700);
     } else if (update.selectionSet) {
@@ -410,7 +488,9 @@ export const inlineWidgetsPlugin = ViewPlugin.fromClass(class {
     if (this._destroyed || this._dragging) return;
     const code  = this._view.state.doc.toString();
     const decos = buildWidgetDecorations(code, this._setDragging);
-    this._view.dispatch({ effects: setWidgetsEffect.of(decos) });
+    const inlayEnabled = this._view.state.field(inlayHintsEnabledField, false);
+    const inlay = inlayEnabled ? buildInlayDecorations(code) : Decoration.none;
+    this._view.dispatch({ effects: [setWidgetsEffect.of(decos), setInlayEffect.of(inlay)] });
     this._rebuildGhost();
   }
 
@@ -433,7 +513,7 @@ export const inlineWidgetsPlugin = ViewPlugin.fromClass(class {
 
   clear() {
     this._view.dispatch({
-      effects: [setWidgetsEffect.of(Decoration.none), setGhostEffect.of(Decoration.none)],
+      effects: [setWidgetsEffect.of(Decoration.none), setGhostEffect.of(Decoration.none), setInlayEffect.of(Decoration.none)],
     });
   }
 
@@ -448,7 +528,7 @@ export const inlineWidgetsPlugin = ViewPlugin.fromClass(class {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function inlineWidgetsExtension() {
-  return [widgetsField, ghostField, inlineWidgetsPlugin];
+  return [widgetsField, ghostField, inlayField, inlayHintsEnabledField, inlineWidgetsPlugin];
 }
 
 export function initInlineWidgets(view) {

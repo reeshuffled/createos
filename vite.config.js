@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  base: '/createos/',
   optimizeDeps: {
     exclude: ['@mediapipe/tasks-vision'],
     include: [
