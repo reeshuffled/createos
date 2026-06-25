@@ -41,7 +41,9 @@ export const PARAM_HINTS = {
   'audio.onWord':       ['word', 'fn'],
   'audio.onSpeech':     ['fn'],
   'audio.say':          ['text', 'opts?'],
-  'audio.pat':          ['pattern', 'instrument?'],
+  'audio.pat':          ['str', 'instrument?'],
+  'audio.pattern':      ['str', 'instrument?'],
+  'audio.chord':        ['notes', 'instrument?'],
   // Video signal
   'video.signal':       ['source', 'opts?'],
   'video.onMotion':     ['source', 'threshold', 'onEnter', 'onExit?'],

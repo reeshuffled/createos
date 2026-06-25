@@ -74,6 +74,7 @@ _registerBuiltin('PianoRollViz',      PianoRollViz);
 _registerBuiltin('EQWidget',          EQWidget);
 _registerBuiltin('Media',    Media);
 _registerBuiltin('pat',     (str, inst, opts) => audio.pat(str, inst, opts));
+_registerBuiltin('pattern', (str, inst, opts) => audio.pattern(str, inst, opts));
 _registerBuiltin('stack',   (...pats) => audio.stack(...pats));
 _registerBuiltin('Pattern', Pattern);
 

@@ -321,10 +321,32 @@ describe('flatten — new features', () => {
 describe('Pattern transforms', () => {
   function wrap(qFn) {
     const p = { _q: qFn };
-    p.fast = (n) => wrap(c => p._q(c).map(e => ({...e, time:e.time/n, dur:e.dur/n})));
-    p.slow = (n) => p.fast(1/n);
-    p.rev  = ()  => wrap(c => p._q(c).map(e => ({...e, time:1-e.time-e.dur})).sort((a,b)=>a.time-b.time));
-    p.gain = (v) => wrap(c => p._q(c).map(e => ({...e, gain:(e.gain??1)*v})));
+    p.fast    = (n)    => wrap(c => p._q(c).map(e => ({...e, time:e.time/n, dur:e.dur/n})));
+    p.slow    = (n)    => p.fast(1/n);
+    p.rev     = ()     => wrap(c => p._q(c).map(e => ({...e, time:1-e.time-e.dur})).sort((a,b)=>a.time-b.time));
+    p.gain    = (v)    => wrap(c => p._q(c).map(e => ({...e, gain:(e.gain??1)*v})));
+    p.add     = (n)    => wrap(c => p._q(c).map(e => ({...e, value: e.value})));
+    p.pan     = (v)    => wrap(c => p._q(c).map(e => ({...e, pan:v})));
+    p.degrade = ()     => wrap(c => p._q(c).filter(() => Math.random() > 0.5));
+    p.degradeBy = (pp) => wrap(c => p._q(c).filter(() => Math.random() > pp));
+    p.jux     = (fn)   => wrap(c => [...p.pan(0)._q(c), ...fn(p).pan(1)._q(c)]);
+    p.off     = (t,fn) => wrap(c => [...p._q(c), ...fn(p)._q(c).map(e => ({...e, time:(e.time+t+1)%1}))].sort((a,b)=>a.time-b.time));
+    p.euclid  = (k,n,rot=0) => {
+      const gate = Array(n).fill(false);
+      for (let i=0;i<k;i++) gate[Math.floor((i*n)/k)]=true;
+      const r = [...gate.slice(rot),...gate.slice(0,rot)];
+      const evs = p._q(0); const dur = 1/n;
+      return wrap(() => r.map((on,i) => on ? {value:evs[i%Math.max(evs.length,1)]?.value??'x',time:i*dur,dur} : null).filter(Boolean));
+    };
+    // learner aliases
+    p.reverse   = ()     => p.rev();
+    p.transpose = (n)    => p.add(n);
+    p.dropout   = ()     => p.degrade();
+    p.dropoutBy = (pp)   => p.degradeBy(pp);
+    p.mirror    = (fn)   => p.jux(fn);
+    p.offset    = (t,fn) => p.off(t,fn);
+    p.rhythm    = (k,n,rot=0) => p.euclid(k,n,rot);
+    p.volume    = (v)    => p.gain(v);
     return p;
   }
   function makePat(str) {
@@ -362,6 +384,70 @@ describe('Pattern transforms', () => {
     const p = makePat('C4');
     const evs = p.gain(0.5).gain(0.5)._q(0);
     expect(evs[0].gain).toBeCloseTo(0.25);
+  });
+
+  it('reverse() is alias for rev()', () => {
+    const p = makePat('C4 E4 G4');
+    const a = p.rev()._q(0);
+    const b = p.reverse()._q(0);
+    expect(b.map(e => e.value)).toEqual(a.map(e => e.value));
+  });
+
+  it('transpose(n) is alias for add(n)', () => {
+    const p = makePat('C4');
+    const a = p.add(4)._q(0);
+    const b = p.transpose(4)._q(0);
+    expect(b[0].value).toBe(a[0].value);
+  });
+
+  it('dropout() is alias for degrade()', () => {
+    const p = makePat('C4 E4 G4 B4');
+    expect(typeof p.dropout).toBe('function');
+    expect(typeof p.dropoutBy).toBe('function');
+  });
+
+  it('mirror(fn) is alias for jux(fn)', () => {
+    const p = makePat('C4 E4');
+    const a = p.jux(x => x.reverse())._q(0);
+    const b = p.mirror(x => x.reverse())._q(0);
+    expect(b.map(e => e.value)).toEqual(a.map(e => e.value));
+  });
+
+  it('offset(t, fn) is alias for off(t, fn)', () => {
+    const p = makePat('C4 E4');
+    const a = p.off(0.5, x => x)._q(0);
+    const b = p.offset(0.5, x => x)._q(0);
+    expect(b.length).toBe(a.length);
+  });
+
+  it('rhythm(k, n) is alias for euclid(k, n)', () => {
+    const p = makePat('x');
+    const a = p.euclid(3, 8)._q(0);
+    const b = p.rhythm(3, 8)._q(0);
+    expect(b.length).toBe(a.length);
+    expect(b.map(e => e.time)).toEqual(a.map(e => e.time));
+  });
+
+  it('volume(v) is alias for gain(v)', () => {
+    const p = makePat('C4');
+    const a = p.gain(0.3)._q(0);
+    const b = p.volume(0.3)._q(0);
+    expect(b[0].gain).toBeCloseTo(a[0].gain);
+  });
+});
+
+describe('audio.chord polyphony', () => {
+  it('array of notes produces comma-separated polyphony', () => {
+    const evs = query('C4,E4,G4');
+    expect(evs.length).toBe(3);
+    expect(evs.map(e => e.value).sort()).toEqual(['C4', 'E4', 'G4']);
+    expect(evs.every(e => e.time === 0)).toBe(true);
+  });
+
+  it('chord notes all start at same time', () => {
+    const evs = query('C4,E4,G4 B4');
+    const chordEvs = evs.filter(e => e.time === 0);
+    expect(chordEvs.length).toBe(3);
   });
 });
 

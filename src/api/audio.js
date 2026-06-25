@@ -369,6 +369,15 @@ export class Pattern {
   degrade()    { return _pp(c => this._q(c).filter(() => Math.random() > 0.5)); }
   degradeBy(p) { return _pp(c => this._q(c).filter(() => Math.random() > p)); }
 
+  // ── Learner-friendly aliases ─────────────────────────────────────────────
+  reverse()         { return this.rev(); }
+  transpose(n)      { return this.add(n); }
+  offset(t, fn)     { return this.off(t, fn); }
+  mirror(fn)        { return this.jux(fn); }
+  dropout()         { return this.degrade(); }
+  dropoutBy(p)      { return this.degradeBy(p); }
+  volume(v)         { return this.gain(v); }
+
   euclid(k, n, rot = 0) {
     return _pp(c => {
       const gate = _euclidRhythm(k, n);
@@ -381,6 +390,8 @@ export class Pattern {
       ).filter(Boolean);
     });
   }
+
+  rhythm(k, n, rot = 0) { return this.euclid(k, n, rot); }
 
   bpm(v) { Tone.getTransport().bpm.value = v; return this; }
 
@@ -1026,6 +1037,13 @@ class AudioAPI {
     p._ct   = opts.cycle ?? '1m';
     p._inst = instrument !== undefined ? instrument : null;
     return p;
+  }
+
+  pattern(str, instrument, opts = {}) { return this.pat(str, instrument, opts); }
+
+  chord(notes, instrument, opts = {}) {
+    const str = Array.isArray(notes) ? notes.join(',') : notes;
+    return this.pat(str, instrument, opts);
   }
 
   stack(...pats) {
