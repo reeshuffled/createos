@@ -8,14 +8,16 @@ import { Shader, ShaderFX, cleanupShaders } from "../api/shader.js";
 import { GLShader, GLSL_PRESETS } from "../api/glsl-shader.js";
 import { initPixi, PIXI } from "../api/pixi.js";
 import { AudioViz, SpectrogramCanvas, PianoRollViz, EQWidget, cleanupViz } from "../api/viz.js";
+import { Drumpad } from "../api/drumpad.js";
 import { Media, cleanupMedia } from "../api/media.js";
 import { VideoSignalAPI, cleanupVideoSignal } from "../api/video-signal.js";
 import { SensorsAPI, cleanupSensors } from "../api/sensors.js";
 import { DesktopAPI, initDesktop, cleanupDesktop, addFolderIcon } from "../api/desktop-files.js";
 import { initDOMCaptures, captureWindow as _captureWindow, cleanupCaptures } from "../editor/editor-capture.js";
-import { pipe, cleanupPipelines } from "../api/render-pipeline.js";
+import { pipe, Source, cleanupPipelines } from "../api/render-pipeline.js";
 import { library, initLibrary, populateLibraryToolkit, populateLibraryBlocks } from "../api/library.js";
 import { initWM } from "../api/wm.js";
+import { installWidgetHistoryKeys } from "../api/widget-history.js";
 import {
   initPaletteWorkspace, onPaletteClick, resizeBlockly,
   TOOLBOX_CATEGORY_META, finishBlockRenders, applyExternalBlocks,
@@ -26,6 +28,9 @@ import { ThreeScene, THREE } from "../api/three-scene.js";
 import { signalGraph } from "../api/signal-graph.js";
 import { ascii } from "../api/ascii.js";
 import { Sprite } from "../api/sprite.js";
+import { SpriteEditor } from "../api/sprite-editor.js";
+import { Paint } from "../api/paint.js";
+import { AsciiEditor } from "../api/asciiEditor.js";
 import { PluginHost, cleanupPlugins } from "../api/plugin-host.js";
 import { shell } from "../api/shell.js";
 import { midi, cleanupMidi } from "../api/midi.js";
@@ -61,6 +66,7 @@ _registerBuiltin('ShaderFX', ShaderFX);
 _registerBuiltin('GLShader', GLShader);
 _registerBuiltin('GLSL_PRESETS', GLSL_PRESETS);
 _registerBuiltin('pipe',    pipe);
+_registerBuiltin('Source',  Source);
 _registerBuiltin('PIXI',     PIXI);
 // Vector constructor stubs — used as type hints in Shader JS function params.
 // In the JS function body these are real values; the transpiler maps them to WGSL vec types.
@@ -72,6 +78,7 @@ _registerBuiltin('AudioViz',          AudioViz);
 _registerBuiltin('SpectrogramCanvas', SpectrogramCanvas);
 _registerBuiltin('PianoRollViz',      PianoRollViz);
 _registerBuiltin('EQWidget',          EQWidget);
+_registerBuiltin('Drumpad',           Drumpad);
 _registerBuiltin('Media',    Media);
 _registerBuiltin('pat',     (str, inst, opts) => audio.pat(str, inst, opts));
 _registerBuiltin('pattern', (str, inst, opts) => audio.pattern(str, inst, opts));
@@ -107,7 +114,13 @@ _registerBuiltin('ThreeScene', ThreeScene);
 _registerBuiltin('THREE',      THREE);
 _registerBuiltin('signalGraph', signalGraph);
 _registerBuiltin('ascii',      ascii);
-_registerBuiltin('Sprite',     Sprite);
+_registerBuiltin('Sprite',        Sprite);
+_registerBuiltin('SpriteEditor',  SpriteEditor);
+_registerBuiltin('spriteEditor',  (opts) => new SpriteEditor(opts));
+_registerBuiltin('Paint',         Paint);
+_registerBuiltin('paint',         (opts) => new Paint(opts));
+_registerBuiltin('AsciiEditor',   AsciiEditor);
+_registerBuiltin('asciiEditor',   (opts) => new AsciiEditor(opts));
 _registerBuiltin('PluginHost', PluginHost);
 _registerBuiltin('shell',    shell);
 _registerBuiltin('midi',      midi);
@@ -177,6 +190,7 @@ window.onload = () => {
   _registerBuiltin('captureWindow', (target, fps) => _captureWindow(target, fps));
 
   // ── Window manager ─────────────────────────────────────────────────────────
+  window.__ar_widgetRestorers = {};
   const _wm = initWM(() => {
     window.__ar_instances?.forEach(inst => {
       inst.cm.requestMeasure();
@@ -185,6 +199,74 @@ window.onload = () => {
   });
   _registerBuiltin('wm', _wm);
   initDesktop(window.wm);
+  installWidgetHistoryKeys();
+
+  // Widget restore factories — called by wm.restoreState for code-generated windows
+  window.__ar_widgetRestorers['drumpad'] = (s) => new Drumpad({
+    title: s.title, x: s.x, y: s.y, w: s.w, h: s.h,
+    bpm: s.widgetState?.bpm, patterns: s.widgetState?.patterns,
+    _desktopIconId: s.widgetState?._desktopIconId,
+  });
+  window.__ar_widgetRestorers['eq'] = (s) => new EQWidget({
+    title: s.title, x: s.x, y: s.y, w: s.w, h: s.h,
+    low: s.widgetState?.low, mid: s.widgetState?.mid, high: s.widgetState?.high,
+  });
+  window.__ar_widgetRestorers['paint'] = (s) => {
+    const ws = s.widgetState ?? {};
+    const frameUrls = ws.frames ?? [];
+    let loaded = 0;
+    const canvases = frameUrls.map(() => {
+      const c = document.createElement('canvas');
+      c.width  = ws.width  ?? 400;
+      c.height = ws.height ?? 300;
+      return c;
+    });
+    const open = () => new Paint({
+      width: ws.width ?? 400, height: ws.height ?? 300,
+      bg: ws.bg ?? '#ffffff', fps: ws.fps ?? 8,
+      title: s.title ?? 'Paint', x: s.x, y: s.y,
+      _desktopIconId: ws._desktopIconId,
+      _frameCanvases: canvases.length ? canvases : null,
+    });
+    if (!frameUrls.length) { open(); return; }
+    frameUrls.forEach((url, i) => {
+      const img = new Image();
+      img.onload  = () => { canvases[i].getContext('2d').drawImage(img, 0, 0); if (++loaded === frameUrls.length) open(); };
+      img.onerror = () => {                                                       if (++loaded === frameUrls.length) open(); };
+      img.src = url;
+    });
+  };
+
+  window.__ar_widgetRestorers['spriteEditor'] = (s) => {
+    const ws = s.widgetState ?? {};
+    const sp = new Sprite({ width: ws.width ?? 16, height: ws.height ?? 16, scale: ws.scale ?? 20, frames: ws.frames?.length ?? 1 });
+    const frameUrls = ws.frames ?? [];
+    let loaded = 0;
+    const open = () => new SpriteEditor({ sprite: sp, title: s.title, x: s.x, y: s.y, _desktopIconId: ws._desktopIconId });
+    if (!frameUrls.length) { open(); return; }
+    frameUrls.forEach((url, i) => {
+      const img = new Image();
+      img.onload = () => {
+        sp._frames[i].getContext('2d').drawImage(img, 0, 0);
+        sp._render();
+        if (++loaded === frameUrls.length) open();
+      };
+      img.onerror = () => { if (++loaded === frameUrls.length) open(); };
+      img.src = url;
+    });
+  };
+
+  window.__ar_widgetRestorers['ascii'] = (s) => {
+    const ws = s.widgetState ?? {};
+    new AsciiEditor({
+      cols: ws.cols ?? 64, rows: ws.rows ?? 24,
+      cellW: ws.cellW ?? 10, cellH: ws.cellH ?? 18,
+      fps: ws.fps ?? 8, bg: ws.bg ?? '#0d0208',
+      title: s.title ?? 'ASCII Editor', x: s.x, y: s.y,
+      _desktopIconId: ws._desktopIconId,
+      _frames: ws.frames ?? null,
+    });
+  };
 
   // PIXI.js — init once at startup (synchronous in v7). Sets window.pixi + window.Stage.
   initPixi();
@@ -321,8 +403,12 @@ window.onload = () => {
 
     modeBar.appendChild(textModeBtn);
     modeBar.appendChild(blocksModeBtn);
-    modeBar.appendChild(searchInput);
     body.appendChild(modeBar);
+
+    const searchRow = document.createElement('div');
+    searchRow.className = 'ar-toolkit-searchrow';
+    searchRow.appendChild(searchInput);
+    body.appendChild(searchRow);
 
     const textPanel = document.createElement('div');
     textPanel.className = 'ar-toolkit-text';
@@ -415,15 +501,15 @@ window.onload = () => {
     searchInput.addEventListener('input', () => {
       if (!inBlocksMode) _filterTextPanel(textPanel, searchInput.value);
     });
-    textModeBtn.addEventListener('click', () => { if (inBlocksMode) { openText(); searchInput.style.display = ''; } });
-    blocksModeBtn.addEventListener('click', () => { if (!inBlocksMode) { openBlocks(); searchInput.style.display = 'none'; } });
+    textModeBtn.addEventListener('click', () => { if (inBlocksMode) { openText(); searchRow.style.display = ''; } });
+    blocksModeBtn.addEventListener('click', () => { if (!inBlocksMode) { openBlocks(); searchRow.style.display = 'none'; } });
 
     new ResizeObserver(() => {
       if (inBlocksMode && paletteWorkspace) resizeBlockly(paletteWorkspace);
     }).observe(body);
   }
 
-  let toolkitIdCounter = 1;
+  let toolkitIdCounter = 0;
 
   function createToolkit(id) {
     toolkitIdCounter = Math.max(toolkitIdCounter, id);
@@ -452,7 +538,8 @@ window.onload = () => {
     window.__ar_instances.set(id, inst);
     return inst;
   }
-  window.__ar_createEditor = createEditor;
+  window.__ar_createEditor  = createEditor;
+  window.__ar_createToolkit = createToolkit;
   window.__ar_newEditorWithCode = (code) => {
     const id = ++editorIdCounter;
     try { localStorage.setItem(`vl-ide-code-${id}`, code); } catch (_) {}
@@ -560,6 +647,18 @@ window.onload = () => {
           const offset = (_vizCount++ % 8) * 24;
           window.wm.spawn('Visualizer', { type: 'viz', w: 400, h: 240, x: cx + offset, y: cy + offset });
         }},
+        { icon: 'fa-sliders', label: 'New EQ Widget', action() {
+          new EQWidget({ title: 'EQ', w: 420, h: 220, x: cx, y: cy });
+        }},
+        { icon: 'fa-gauge-high', label: 'Motion Sensor', action() {
+          window.wm.spawn('Motion Sensor', { type: 'sensor', source: 'motion', w: 280, h: 300, x: cx, y: cy });
+        }},
+        { icon: 'fa-gamepad', label: 'Gamepad', action() {
+          window.wm.spawn('Gamepad', { type: 'sensor', source: 'gamepad', w: 280, h: 300, x: cx, y: cy });
+        }},
+        { icon: 'fa-location-dot', label: 'Geolocation', action() {
+          window.wm.spawn('Geolocation', { type: 'sensor', source: 'geo', w: 280, h: 300, x: cx, y: cy });
+        }},
         { icon: 'fa-toolbox', label: 'New Toolkit', action() {
           const id = ++toolkitIdCounter;
           const win = createToolkit(id);
@@ -620,6 +719,177 @@ window.onload = () => {
       y: Math.round((dh - 240) / 2) + offset,
     });
   });
+
+  // ── "New EQ Widget" button ─────────────────────────────────────────────────
+  document.getElementById('newEqBtn')?.addEventListener('click', () => {
+    const desk = document.getElementById('desktop');
+    const dw = desk.offsetWidth, dh = desk.offsetHeight;
+    const offset = (_vizCount++ % 6) * 24;
+    new EQWidget({
+      title: 'EQ', w: 420, h: 220,
+      x: Math.round((dw - 420) / 2) + offset,
+      y: Math.round((dh - 220) / 2) + offset,
+    });
+  });
+
+  // ── "New Drum Pad" button ──────────────────────────────────────────────────
+  document.getElementById('newDrumpadBtn')?.addEventListener('click', () => {
+    const desk = document.getElementById('desktop');
+    const dw = desk.offsetWidth, dh = desk.offsetHeight;
+    const offset = (_vizCount++ % 6) * 24;
+    new Drumpad({
+      title: 'Drum Pad', w: 500, h: 360,
+      x: Math.round((dw - 500) / 2) + offset,
+      y: Math.round((dh - 360) / 2) + offset,
+    });
+  });
+
+  // ── "New Paint" button ────────────────────────────────────────────────────
+  document.getElementById('newPaintBtn')?.addEventListener('click', () => {
+    const desk = document.getElementById('desktop');
+    const dw = desk.offsetWidth, dh = desk.offsetHeight;
+    const offset = (_vizCount++ % 6) * 24;
+    const ed = new Paint({ width: 400, height: 300, title: 'Paint' });
+    if (ed._winId) {
+      const win = document.getElementById(ed._winId);
+      if (win) {
+        const ww = parseInt(win.style.width)  || 404;
+        const wh = parseInt(win.style.height) || 520;
+        win.style.left = Math.round((dw - ww) / 2) + offset + 'px';
+        win.style.top  = Math.round((dh - wh) / 2) + offset + 'px';
+      }
+    }
+  });
+
+  // ── "New ASCII Editor" button ─────────────────────────────────────────────
+  document.getElementById('newAsciiEditorBtn')?.addEventListener('click', () => {
+    const desk = document.getElementById('desktop');
+    const dw = desk.offsetWidth, dh = desk.offsetHeight;
+    const offset = (_vizCount++ % 6) * 24;
+    const ed = new AsciiEditor({ cols: 64, rows: 24, title: 'ASCII Editor' });
+    if (ed._winId) {
+      const win = document.getElementById(ed._winId);
+      if (win) {
+        const ww = parseInt(win.style.width)  || 648;
+        const wh = parseInt(win.style.height) || 580;
+        win.style.left = Math.round((dw - ww) / 2) + offset + 'px';
+        win.style.top  = Math.round((dh - wh) / 2) + offset + 'px';
+      }
+    }
+  });
+
+  // ── "New Sprite Editor" button ────────────────────────────────────────────
+  document.getElementById('newSpriteEditorBtn')?.addEventListener('click', () => {
+    const desk = document.getElementById('desktop');
+    const dw = desk.offsetWidth, dh = desk.offsetHeight;
+    const offset = (_vizCount++ % 6) * 24;
+    const ed = new SpriteEditor({ width: 16, height: 16, scale: 20, title: 'Sprite Editor' });
+    // center the window after the wm spawn placed it
+    if (ed._winId) {
+      const win = document.getElementById(ed._winId);
+      if (win) {
+        const ww = parseInt(win.style.width) || 344;
+        const wh = parseInt(win.style.height) || 520;
+        win.style.left = Math.round((dw - ww) / 2) + offset + 'px';
+        win.style.top  = Math.round((dh - wh) / 2) + offset + 'px';
+      }
+    }
+  });
+
+  // ── "New Sensor Monitor" button (dropdown) ─────────────────────────────────
+  (() => {
+    const btn  = document.getElementById('newSensorBtn');
+    const drop = document.getElementById('sensorDropdown');
+    if (!btn || !drop) return;
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      drop.classList.toggle('open');
+    });
+
+    drop.addEventListener('click', (e) => {
+      const li = e.target.closest('li[data-source]');
+      if (!li) return;
+      const source = li.dataset.source;
+      const titles = { motion: 'Motion Sensor', gamepad: 'Gamepad', geo: 'Geolocation', battery: 'Battery' };
+      const desk = document.getElementById('desktop');
+      const dw = desk.offsetWidth, dh = desk.offsetHeight;
+      const offset = (_vizCount++ % 8) * 24;
+      window.wm.spawn(titles[source] ?? 'Sensor', {
+        type: 'sensor', source,
+        w: 280, h: 300,
+        x: Math.round((dw - 280) / 2) + offset,
+        y: Math.round((dh - 300) / 2) + offset,
+      });
+      drop.classList.remove('open');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!btn.contains(e.target)) drop.classList.remove('open');
+    });
+  })();
+
+  // ── "Demo Gallery" button ──────────────────────────────────────────────────
+  (() => {
+    const galleryBtn   = document.getElementById('galleryBtn');
+    const galleryModal = document.getElementById('galleryModal');
+    const galleryGrid  = document.getElementById('galleryGrid');
+    const galleryClose = document.getElementById('galleryCloseBtn');
+    if (!galleryBtn || !galleryModal) return;
+
+    let _demosLoaded = false;
+
+    async function _loadGallery() {
+      if (_demosLoaded) return;
+      _demosLoaded = true;
+      try {
+        const res  = await fetch('/createos/demos/index.json');
+        const list = await res.json();
+        galleryGrid.innerHTML = '';
+        for (const demo of list) {
+          const card = document.createElement('div');
+          card.className = 'gallery-card';
+          const tags = (demo.tags ?? []).map(t => `<span class="gallery-tag">${t}</span>`).join('');
+          card.innerHTML = `
+            <h3 class="gallery-card-title">${demo.title}</h3>
+            <p class="gallery-card-desc">${demo.desc}</p>
+            <div class="gallery-card-tags">${tags}</div>
+            <button class="gallery-load-btn" data-file="${demo.file}">
+              <i class="fa-solid fa-play" style="font-size:9px;margin-right:4px;"></i>Load Demo
+            </button>`;
+          galleryGrid.appendChild(card);
+        }
+      } catch (err) {
+        galleryGrid.innerHTML = `<p style="color:#f38ba8;font-family:Arial;padding:12px;">Failed to load demos: ${err.message}</p>`;
+      }
+    }
+
+    galleryGrid.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.gallery-load-btn');
+      if (!btn) return;
+      const file = btn.dataset.file;
+      btn.textContent = 'Loading…';
+      btn.disabled = true;
+      try {
+        const res  = await fetch(`/createos/demos/${file}`);
+        const data = await res.json();
+        galleryModal.close();
+        await applyProject(data, window.wm, window.__ar_instances, appAPI);
+      } catch (err) {
+        btn.textContent = 'Error — try again';
+        btn.disabled = false;
+        console.error('Gallery load failed:', err);
+      }
+    });
+
+    galleryBtn.addEventListener('click', async () => {
+      await _loadGallery();
+      galleryModal.showModal();
+    });
+
+    galleryClose.addEventListener('click', () => galleryModal.close());
+    galleryModal.addEventListener('click', (e) => { if (e.target === galleryModal) galleryModal.close(); });
+  })();
 
   // Track system-spawned viz window IDs so they can be closed when the source is toggled off.
   let _sysMicVizId = null;

@@ -406,7 +406,7 @@ function extractParams(fnNode) {
 
 // ── Main entry ────────────────────────────────────────────────────────────────
 
-export function jsToWGSL(fn, { extraParams = {} } = {}) {
+export function jsToWGSL(fn, { extraParams = {}, bind = {} } = {}) {
   const src = typeof fn === 'function' ? fn.toString() : String(fn);
 
   let ast;
@@ -429,6 +429,8 @@ export function jsToWGSL(fn, { extraParams = {} } = {}) {
   // Always seed all known params so callers don't have to destructure everything
   for (const [k, t] of Object.entries(KNOWN_PARAMS)) env.set(k, t);
   for (const [k, t] of Object.entries(extraParams)) env.set(k, t);
+  // Bound aliases (e.g. viz: v = col.r) — scalars declared at the body top.
+  for (const k of Object.keys(bind)) env.set(k, 'f32');
 
   // Normalise body to a statement list
   let stmts;
@@ -446,11 +448,21 @@ export function jsToWGSL(fn, { extraParams = {} } = {}) {
   }
 
   // Emit main body (skip FunctionDeclarations — already hoisted)
-  const bodyLines = stmts
+  const userLines = stmts
     .filter(s => s.type !== 'FunctionDeclaration')
     .map(s => emitStmt(s, env, '  '))
     .filter(s => s != null)
     .join('\n');
 
-  return { body: bodyLines, helpers, usesCol };
+  // Prepend bound-alias declarations (caller maps a param name → a WGSL expr).
+  const bindLines = Object.entries(bind)
+    .map(([k, expr]) => `  let ${k} = ${expr};`)
+    .join('\n');
+  const bodyLines = bindLines ? `${bindLines}\n${userLines}` : userLines;
+
+  // A bind expr may reference `col` (the video sample) even when the fn never
+  // names a `col` param — surface that so the caller wires the video binding.
+  const bindUsesCol = Object.values(bind).some(e => /\bcol\b/.test(String(e)));
+
+  return { body: bodyLines, helpers, usesCol: usesCol || bindUsesCol };
 }

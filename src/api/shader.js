@@ -1,5 +1,9 @@
 import { jsToWGSL } from './js-to-wgsl.js';
 import { resolveWGSL, library } from './library.js';
+import { resolveDrawable } from './drawable-source.js';
+import { onReset } from '../runtime/reset-registry.js';
+import { liveOutput } from '../runtime/keep-alive.js';
+import { mountLayerCanvas } from './layer.js';
 
 const _shaders = [];
 
@@ -118,10 +122,11 @@ function _readShaderFft(src, bins = 32) {
 // ── Shader class ────────────────────────────────────────────────────────────
 
 export class Shader {
-  constructor(fragmentBodyOrWGSL, { z = 30, opacity = 1.0, video = null, container = null } = {}) {
+  constructor(fragmentBodyOrWGSL, { z = 30, opacity = 1.0, video = null, container = null, bind = null } = {}) {
     // Accept a JS function — transpiled to WGSL at start() time (after video src is known)
     this._fn      = typeof fragmentBodyOrWGSL === 'function' ? fragmentBodyOrWGSL : null;
     this._fragSrc = this._fn ? null : resolveWGSL(fragmentBodyOrWGSL);
+    this._bind    = bind;   // param-alias map forwarded to jsToWGSL (internal; e.g. viz {v:'col.r'})
     this._helpers = [];   // WGSL helper fn strings from jsToWGSL
     this._z = z;
     this._opacity = opacity;
@@ -150,11 +155,9 @@ export class Shader {
   // ── Video source resolution ──────────────────────────────────────────────
 
   _resolveVideoSrc() {
-    const s = this._videoSrc;
-    if (!s) return null;
-    if (s._canvas instanceof HTMLCanvasElement) return s._canvas; // VideoLayer / ImageLayer
-    if (s.element instanceof HTMLVideoElement) return s.element;  // CameraStream
-    return s; // raw HTMLVideoElement or HTMLCanvasElement
+    // Shared object-form resolver (ADR 006); `?? this._videoSrc` keeps the old
+    // permissive passthrough for exotic GPU-uploadable sources (ImageBitmap…).
+    return resolveDrawable(this._videoSrc) ?? this._videoSrc ?? null;
   }
 
   _srcSize(src) {
@@ -172,36 +175,19 @@ export class Shader {
     if (!adapter) throw new Error("No WebGPU adapter available");
     this._device = await adapter.requestDevice();
 
-    this._canvas = document.createElement("canvas");
-    this._canvas._ar_webgpu = true; // tag so mirror copy loop can skip it
-    const fsContainer = window.__ar_fsContainer ?? document.getElementById("fsContainer");
-    const wrapper    = window.__ar_canvasWrapper ?? document.getElementById("canvasWrapper");
-    // container opt mounts shader inside an arbitrary element (e.g. a WM window body)
-    const parent     = this._container ?? fsContainer ?? wrapper;
-    const sizeRef    = this._container ?? wrapper ?? parent;
-    const refCanvas  = (this._container ?? wrapper)?.querySelector("canvas");
-    this._canvas.width  = refCanvas?.width  ?? 1600;
-    this._canvas.height = refCanvas?.height ?? 900;
-    Object.assign(this._canvas.style, {
-      position: "absolute",
-      top: "0", left: "0",
-      width: "100%", height: "100%",
-      zIndex: String(this._z),
-      opacity: String(this._opacity),
-      pointerEvents: "none",
+    const { canvas, parent, resizeObserver } = mountLayerCanvas({
+      z: this._z, opacity: this._opacity, container: this._container, webgpu: true,
+      onResize: (w, h) => { if (this._readable) { this._readable.width = w; this._readable.height = h; } },
     });
-    if (this._container) {
-      // ensure body can contain absolutely-positioned children
-      const pos = getComputedStyle(this._container).position;
-      if (pos === 'static') this._container.style.position = 'relative';
-    }
+    this._canvas = canvas;
+    this._resizeObserver = resizeObserver;
 
     // 2D readable shadow canvas — updated each frame within shader RAF so drawImage works.
     // Mirror windows read from this instead of the WebGPU canvas (which is unreadable outside its own RAF).
     this._readable = document.createElement("canvas");
     this._readable._ar_shaderReadable = true; // mirror pings this flag to request blits
-    this._readable.width  = this._canvas.width;
-    this._readable.height = this._canvas.height;
+    this._readable.width  = canvas.width;
+    this._readable.height = canvas.height;
     Object.assign(this._readable.style, {
       position: "absolute",
       top: "0", left: "0",
@@ -211,18 +197,6 @@ export class Shader {
       pointerEvents: "none",
     });
     parent?.appendChild(this._readable);
-    parent?.appendChild(this._canvas);
-
-    this._resizeObserver = new ResizeObserver(() => {
-      const w = Math.round((sizeRef?.clientWidth  ?? 0) * devicePixelRatio) || 1600;
-      const h = Math.round((sizeRef?.clientHeight ?? 0) * devicePixelRatio) || 900;
-      if (this._canvas.width !== w || this._canvas.height !== h) {
-        this._canvas.width  = w;
-        this._canvas.height = h;
-        if (this._readable) { this._readable.width = w; this._readable.height = h; }
-      }
-    });
-    this._resizeObserver.observe(sizeRef ?? parent);
 
     const format = navigator.gpu.getPreferredCanvasFormat();
     this._ctx = this._canvas.getContext("webgpu");
@@ -250,7 +224,7 @@ export class Shader {
     // JS function path — transpile to WGSL now (video src is known)
     if (this._fn) {
       try {
-        const result = jsToWGSL(this._fn);
+        const result = jsToWGSL(this._fn, this._bind ? { bind: this._bind } : {});
         this._fragSrc = result.body;
         this._helpers = result.helpers;
         // if fn uses 'col' param, ensure video binding is set up
@@ -430,8 +404,7 @@ export class Shader {
   // ── Public API ──────────────────────────────────────────────────────────
 
   start() {
-    window.__ar_keepAlive = window.__ar_keepAlive ?? new Set();
-    window.__ar_keepAlive.add(this);
+    this._live = liveOutput(this);
     (async () => {
       if (!this._device) await this._init();
       if (this._rafId) return;
@@ -442,7 +415,7 @@ export class Shader {
       this._rafId = requestAnimationFrame(loop);
     })().catch((e) => {
       console.error("Shader error:", e.message);
-      window.__ar_keepAlive?.delete(this);
+      this._live?.release();
     });
     return this;
   }
@@ -500,7 +473,7 @@ export class Shader {
 
   _destroy() {
     this.stop();
-    window.__ar_keepAlive?.delete(this);
+    this._live?.release();
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     this._readable?.remove();
@@ -565,3 +538,6 @@ export class ShaderFX {
   static window(name = 'editor', effect = 'greyscale') { return ShaderFX.windowShader(name, effect).start(); }
   static micViz(effect = 'greyscale') { return ShaderFX.micVizShader(effect).start(); }
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupShaders);

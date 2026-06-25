@@ -1,3 +1,4 @@
+import { onReset } from '../runtime/reset-registry.js';
 // signal-graph.js — read-only overlay of signal-bus routing
 // Sources: audio.fft, sensors.*, video.signal(), camera streams
 // Sinks: ThreeScene, Shader, GLShader, pipe()
@@ -138,3 +139,6 @@ export const signalGraph = new SignalGraphAPI();
 export function cleanupSignalGraph() {
   window.__ar_signalRoutes = [];
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupSignalGraph);

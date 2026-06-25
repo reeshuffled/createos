@@ -40,7 +40,7 @@ export function serializeProject(wm, instances) {
         title: win.querySelector('.wm-title')?.textContent?.trim() ?? 'Editor',
         ..._geo(win),
         audio:          _readAudio(win),
-        code:           inst.cm.getValue(),
+        code:           inst.cm.state.doc.toString(),
         mode:           inst.blocksMode ? 'blocks' : 'text',
         blocksJson:     inst.blocksMode && inst.blocklyWorkspace
                           ? saveWorkspaceJSON(inst.blocklyWorkspace)
@@ -146,7 +146,7 @@ export async function applyProject(data, wm, instances, appAPI) {
     const inst = appAPI.createEditor(w.editorId);
     editorIds.push(w.editorId);
 
-    inst.cm.setValue(w.code ?? '');
+    inst.cm.dispatch({ changes: { from: 0, to: inst.cm.state.doc.length, insert: w.code ?? '' } });
     if (w.mode === 'blocks' && w.blocksJson) inst.loadBlocksJSON(w.blocksJson);
 
     _applyGeo(document.getElementById(inst.editorWinId), w);

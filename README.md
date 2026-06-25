@@ -4,6 +4,8 @@ A live coding environment for creating audiovisual experiences in the browser �
 
 ## Project Principles
 
+This application is not the best of anything. We provide creative tools for people to play, create, and experiment, but at the end of the day, there are much more professional and powerful versions of each of the tools in here, and that's okay. We would highly encourage people to have their tools evolve with their processes.
+
 * Reactivity
 * Automation
 * Flexibility and Connectedness
@@ -15,12 +17,13 @@ A live coding environment for creating audiovisual experiences in the browser �
 - **GPU shaders** — full-screen WebGPU/WGSL fragment shaders (`Shader`) or WebGL/GLSL (`GLShader`, all browsers, ShaderToy paste-in) with `time`, `uv`, `mouse`, and custom uniforms
 - **3D scenes** — Three.js via `ThreeScene` + full `THREE` namespace; tick loop, z-layering, signal binding, opacity — composable with shaders and draw
 - **PIXI.js** — WebGL scene graph for sprites, particles, rich text, per-object filters, and hit-testing; layers cleanly with shaders and draw
-- **2D canvas** — draw on z-indexed layers with CSS filter effects; rich text with stroke, shadow, gradient, and web fonts (`draw.loadFont`)
+- **2D canvas** — draw on z-indexed layers with CSS filter effects; rich text with stroke, shadow, gradient, and web fonts (`draw.loadFont`); `draw.backdrop(source)` renders an image/video/camera/canvas on the layer below so all draw calls appear on top — accepts a URL, `'camera'`, any drawable element, or shader; returns `{ stop(), layer }`
 - **Render pipeline** — chain visual stages with `pipe(source).ascii().glshader().fx('hue-rotate(90deg)').subtitle(srt).show()`; sources: camera, canvas, video, shader; stages compose freely
 
 ### Audio
 - **Synthesis** — synths, sequencers, effects chains via [Tone.js](https://tonejs.github.io/); pattern sequencing with a [Strudel](https://strudel.cc/) / [TidalCycles](https://tidalcycles.org/)-inspired mini-notation and composable `Pattern` algebra (`pat("bd*2 sd").fast(2).every(4, p => p.rev()).start()`)
-- **Visualization** — live spectrogram, piano roll, and EQ widget (draggable frequency curve over live FFT); `audio.fft.bass/mid/high` as control signals
+- **Drum machine** — `audio.drumpad()` or toolbar 🥁 button opens an 8-pad drum machine with 16-step sequencer; keyboard shortcuts q/w/e/r/a/s/d/f; programmatic `.pattern(vi, 'x . x .')` and `.bpm(128)`; event/signal API: `.onPad('kick', fn)`, `.onHit(fn)`, `.onStep(fn)`, `.signal('kick', {decay})→{value,stream}` — hooks are per-instance and cleared on reset
+- **Visualization** — live spectrogram, piano roll, and EQ widget (draggable frequency curve over live FFT); `audio.fft.bass/mid/high` as control signals; visualizer windows have customizable background and waveform colors persisted across reloads
 - **MIDI** — Web MIDI input: `midi.onNote(fn)`, `midi.onCC(ch, cc, fn)`, `midi.signal(ch, cc)` → live 0–1 signal wired to anything
 - **Voice & TTS** — recognize spoken words with `audio.onWord()` / `audio.onSpeech()`, speak with `audio.say()`
 
@@ -40,7 +43,13 @@ A live coding environment for creating audiovisual experiences in the browser �
 
 ### Desktop & Windows
 - **Window management** — spawn floating windows (image, video, camera, canvas, shader, HTML) from code; move/resize/maximize/filter with `wm.spawn`, `wm.layout`, `wm.filter`, etc.
+- **Sensor monitors** — toolbar gauge icon spawns Motion/Gamepad/Geolocation/Battery monitor windows; also via `wm.spawn('Motion', { type: 'sensor', source: 'motion' })`
 - **File management** — pick files with `wm.pickFile()`, browse directories with `wm.browse()`; manage desktop icons with `desktop.add/onFile/files`
+- **Demo gallery** — toolbar 🎬 button opens a gallery of curated runnable demos; each loads a full project layout via `applyProject()`
+- **Pixel art** — `Sprite` API for programmatic pixel-grid sprites; `spriteEditor()` or toolbar paintbrush＋ button opens an Aseprite-style paint GUI with pencil/eraser/fill/eyedropper/line/rect tools, multi-frame timeline, onion skinning, and ⤓ Code / ⤓ PNG / ⤓ Sheet export; `sp.edit()` on any existing sprite opens the GUI on it. **Event/signal API**: `sp.onPixel(fn)`, `sp.onStroke(fn)`, `sp.signal('pixel', {decay,region})` — drive audio/shader params from brush activity
+- **Paint canvas** — `paint()` or toolbar 🖌️ button opens a freehand doodle canvas; tools: pen (smooth quadratic strokes), eraser, line, rect, ellipse, fill, eyedropper; adjustable brush size (1–64px), background color, multi-frame animation with onion skinning, undo/redo (Cmd+Z), autosave to desktop icon, ⤓ Code / ⤓ PNG / ⤓ Sheet export. **Backdrop support**: pass `backdrop:'url'` or click 🖼 in the toolbar to load an image or video as a reference layer beneath strokes; 📷 Freeze frame bakes a live video frame to static for tracing; export composites backdrop + drawing. **Event/signal API**: `p.onStroke(fn)`, `p.signal('stroke', {decay,region})` — spatially-scoped decaying signals react to where on the canvas you draw
+- **In-window paint overlay** — every image, video, camera, canvas, and shader window has a 🖌️ titlebar toggle that activates a drawing canvas over the live content with a compact pen/eraser/color/size/clear/snapshot toolbar; 📷 Snapshot composites the visual frame + drawing into a PNG desktop icon. **Event/signal API**: `wm.onStroke(winId, fn)`, `wm.paintSignal(winId, 'stroke', {decay})` — draw over a live camera feed and drive shader parameters from your strokes
+- **ASCII art editor** — `asciiEditor()` or toolbar terminal＋ button opens an interactive colored ASCII art editor (asciistudio.app-style); per-cell foreground + background color; tools: type (keyboard entry with caret), brush, eraser, flood fill, eyedropper, line, rect; character palette (`░▒▓█▀▄■`…) + custom glyph input; animation frames with onion skinning, undo/redo (Cmd+Z), autosave to desktop icon; export as runnable `ascii.play([...])` code snippet (with full color), plain text, or ANSI escape-coded text. **Event/signal API**: `ae.onCell(fn)`, `ae.signal('cell', {decay, region:{x,y,w,h}})` — cell coordinates for region-scoped triggers
 
 ## Editor features
 

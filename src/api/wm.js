@@ -4,6 +4,17 @@
 // All windows are spawned (no built-in/special windows). Layouts position tiled windows; floating windows manage themselves.
 
 import * as Tone from 'tone';
+import { WidgetEvents } from './widget-events.js';
+import { onReset } from '../runtime/reset-registry.js';
+
+// ── Paint-overlay WidgetEvents registry (for cleanupPaintOverlays) ────────────
+
+const _overlayEvents = new Set();
+
+/** Called on every editor reset — clears all overlay event hooks. */
+export function cleanupPaintOverlays() {
+  for (const ev of _overlayEvents) ev.clear();
+}
 
 // ── File browser helpers ──────────────────────────────────────────────────────
 
@@ -351,11 +362,27 @@ export function initWM(onContentResize) {
         const isBlobSrc = opts.src?.startsWith('blob:');
         entry.spawned = true;
         entry.title   = win.querySelector('.wm-title')?.textContent ?? opts.title;
+        // Toolkit windows restored via app-level handler, not generic html spawn
+        if (win.id.startsWith('win-toolkit')) {
+          entry.type = 'toolkit';
+          wins.push(entry);
+          return;
+        }
         entry.type    = opts.type;
         if (opts.html !== undefined) entry.html = opts.html;
         if (!isBlobSrc && opts.src !== undefined) entry.src = opts.src;
         if (opts.loop !== undefined) entry.loop = opts.loop;
         if (isBlobSrc) entry.hasHandle = true; // handle stored in IndexedDB
+        // Persist viz source/style so restored windows reuse them
+        if (opts.type === 'viz') {
+          entry.source = win._vizSourceEl?.value ?? opts.source ?? 'master';
+          entry.style  = win._vizStyleEl?.value  ?? opts.style  ?? 'wave';
+          if (win._vizColors) entry.colors = { ...win._vizColors };
+        }
+        if (win._widgetType) {
+          entry.widgetType  = win._widgetType;
+          entry.widgetState = win._widgetState?.() ?? {};
+        }
       }
       wins.push(entry);
     });
@@ -445,6 +472,328 @@ export function initWM(onContentResize) {
     const firstBtn = tb.querySelector('.wm-btn');
     tb.insertBefore(bV, firstBtn);
     tb.insertBefore(bH, bV);
+  }
+
+  // ── In-window paint overlay ───────────────────────────────────────────────────
+  // Adds a 🖌️ toggle button to the titlebar.  When active, a drawing canvas
+  // covers the visual element and a mini-toolbar (color/size/eraser/clear/
+  // snapshot) docks inside the body.  Thin feature set vs full Paint editor —
+  // no frames, no undo, no onion skin.  Snapshot composites the live visual
+  // frame + overlay into a PNG desktop icon; "Edit in Paint" opens the full
+  // Paint editor with that composite as a backdrop.
+  //
+  // `visualEl` — the <img>, <video>, or <canvas> element inside the window body.
+  // The overlay is sized and stacked to cover it exactly.
+
+  function _addPaintOverlay(win, body, visualEl) {
+    const tb = win.querySelector('.wm-titlebar');
+    if (!tb || !visualEl) return;
+
+    let active    = false;
+    let drawing   = false;
+    let lastX     = 0, lastY  = 0;
+    let prevX     = null, prevY = null;
+    let tool      = 'pen';  // 'pen' | 'eraser'
+    let color     = '#ff0000';
+    let brushSize = 6;
+
+    // ── WidgetEvents ─────────────────────────────────────────────────────────
+    const events = new WidgetEvents();
+    win._paintEvents = events;
+    _overlayEvents.add(events);
+
+    // stroke bbox tracking
+    let _bbox = null; // { minX, minY, maxX, maxY }
+    const _bboxExpand = (x, y) => {
+      if (!_bbox) { _bbox = { minX: x, minY: y, maxX: x, maxY: y }; return; }
+      if (x < _bbox.minX) _bbox.minX = x;
+      if (y < _bbox.minY) _bbox.minY = y;
+      if (x > _bbox.maxX) _bbox.maxX = x;
+      if (y > _bbox.maxY) _bbox.maxY = y;
+    };
+
+    // overlay canvas (created lazily when first activated)
+    let overlay  = null;
+    let miniBar  = null;
+    let colorIn  = null;
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    const getVisualRect = () => {
+      // Get visual element bounding rect relative to the window body
+      const vr = visualEl.getBoundingClientRect();
+      const br = body.getBoundingClientRect();
+      return { left: vr.left - br.left, top: vr.top - br.top, w: vr.width, h: vr.height };
+    };
+
+    const buildOverlay = () => {
+      if (overlay) return;
+      const r = getVisualRect();
+      overlay = document.createElement('canvas');
+      overlay.width  = Math.round(r.w) || 320;
+      overlay.height = Math.round(r.h) || 240;
+      Object.assign(overlay.style, {
+        position: 'absolute',
+        left: r.left + 'px',
+        top:  r.top  + 'px',
+        width:  r.w + 'px',
+        height: r.h + 'px',
+        cursor: 'crosshair',
+        pointerEvents: 'auto',
+        zIndex: '50',
+        touchAction: 'none',
+      });
+      body.style.position = 'relative';
+      body.appendChild(overlay);
+
+      overlay.addEventListener('pointerdown',  onDown);
+      overlay.addEventListener('pointermove',  onMove);
+      overlay.addEventListener('pointerup',    onUp);
+      overlay.addEventListener('pointerleave', onUp);
+    };
+
+    const removeOverlay = () => {
+      if (!overlay) return;
+      overlay.removeEventListener('pointerdown',  onDown);
+      overlay.removeEventListener('pointermove',  onMove);
+      overlay.removeEventListener('pointerup',    onUp);
+      overlay.removeEventListener('pointerleave', onUp);
+      overlay.remove();
+      overlay = null;
+    };
+
+    const buildMiniBar = () => {
+      if (miniBar) return;
+      miniBar = document.createElement('div');
+      miniBar.style.cssText = [
+        'position:absolute;bottom:6px;left:50%;transform:translateX(-50%);',
+        'display:flex;gap:5px;align-items:center;padding:4px 8px;',
+        'background:rgba(18,18,30,0.88);border:1px solid #45475a;',
+        'border-radius:8px;z-index:51;backdrop-filter:blur(4px);flex-wrap:wrap;',
+      ].join('');
+
+      const mkBtn = (label, title, fn) => {
+        const b = document.createElement('button');
+        b.innerHTML = label; b.title = title;
+        b.style.cssText = [
+          'background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:5px;',
+          'padding:3px 7px;font-size:11px;cursor:pointer;white-space:nowrap;',
+        ].join('');
+        b.addEventListener('click', fn);
+        return b;
+      };
+
+      // Pen/eraser toggle
+      const penBtn    = mkBtn('✏️', 'Pen',    () => {
+        const prev = tool; tool = 'pen';
+        penBtn.style.borderColor = '#cba6f7'; eraserBtn.style.borderColor = '#45475a';
+        events.emit('tool', { tool, prev, winId: win.id });
+      });
+      const eraserBtn = mkBtn('⌫', 'Eraser', () => {
+        const prev = tool; tool = 'eraser';
+        eraserBtn.style.borderColor = '#cba6f7'; penBtn.style.borderColor = '#45475a';
+        events.emit('tool', { tool, prev, winId: win.id });
+      });
+      penBtn.style.borderColor = '#cba6f7';  // pen active by default
+
+      // Color picker
+      colorIn = document.createElement('input');
+      colorIn.type  = 'color';
+      colorIn.value = color;
+      colorIn.title = 'Stroke color';
+      colorIn.style.cssText = 'width:24px;height:24px;border:none;border-radius:3px;cursor:pointer;padding:0;background:none;flex-shrink:0;';
+      colorIn.addEventListener('input', () => {
+        const prev = color; color = colorIn.value;
+        events.emit('color', { color, prev, winId: win.id });
+      });
+
+      // Brush size
+      const sizeSlider = document.createElement('input');
+      sizeSlider.type  = 'range'; sizeSlider.min = '1'; sizeSlider.max = '48'; sizeSlider.value = String(brushSize);
+      sizeSlider.title = 'Brush size';
+      sizeSlider.style.cssText = 'width:55px;accent-color:#cba6f7;flex-shrink:0;';
+      sizeSlider.addEventListener('input', () => { brushSize = parseInt(sizeSlider.value, 10); });
+
+      // Clear
+      const clearBtn = mkBtn('🗑', 'Clear drawing', () => {
+        if (!overlay) return;
+        overlay.getContext('2d').clearRect(0, 0, overlay.width, overlay.height);
+        events.emit('clear', { winId: win.id });
+      });
+
+      // Snapshot
+      const snapBtn = mkBtn('📷 Snapshot', 'Composite visual + drawing → PNG on desktop', () => _doSnapshot());
+
+      miniBar.appendChild(penBtn);
+      miniBar.appendChild(eraserBtn);
+      miniBar.appendChild(colorIn);
+      miniBar.appendChild(sizeSlider);
+      miniBar.appendChild(clearBtn);
+      miniBar.appendChild(snapBtn);
+
+      body.appendChild(miniBar);
+    };
+
+    const removeMiniBar = () => { miniBar?.remove(); miniBar = null; };
+
+    // ── Drawing ──────────────────────────────────────────────────────────────
+
+    const getPos = (e) => {
+      if (!overlay) return { x: 0, y: 0 };
+      const rect = overlay.getBoundingClientRect();
+      const sx = overlay.width  / rect.width;
+      const sy = overlay.height / rect.height;
+      return {
+        x: (e.clientX - rect.left) * sx,
+        y: (e.clientY - rect.top)  * sy,
+      };
+    };
+
+    const onDown = (e) => {
+      e.preventDefault();
+      overlay.setPointerCapture(e.pointerId);
+      drawing = true;
+      _bbox = null;
+      const { x, y } = getPos(e);
+      lastX = x; lastY = y; prevX = null; prevY = null;
+      _bboxExpand(x, y);
+      const ctx = overlay.getContext('2d');
+      ctx.save();
+      ctx.lineCap  = 'round';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = brushSize;
+      if (tool === 'eraser') { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = 'rgba(0,0,0,1)'; }
+      else                   { ctx.globalCompositeOperation = 'source-over';     ctx.strokeStyle = color; }
+      ctx.beginPath();
+      ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    };
+
+    const onMove = (e) => {
+      if (!drawing) return;
+      const { x, y } = getPos(e);
+      _bboxExpand(x, y);
+      const ctx = overlay.getContext('2d');
+      ctx.save();
+      ctx.lineCap  = 'round';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = brushSize;
+      if (tool === 'eraser') { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = 'rgba(0,0,0,1)'; }
+      else                   { ctx.globalCompositeOperation = 'source-over';     ctx.strokeStyle = color; }
+      ctx.beginPath();
+      if (prevX !== null) {
+        const mx = (lastX + x) / 2, my = (lastY + y) / 2;
+        ctx.moveTo((prevX + lastX) / 2, (prevY + lastY) / 2);
+        ctx.quadraticCurveTo(lastX, lastY, mx, my);
+      } else {
+        ctx.moveTo(lastX, lastY);
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.restore();
+      prevX = lastX; prevY = lastY;
+      lastX = x;     lastY = y;
+    };
+
+    const onUp = () => {
+      if (!drawing) return;
+      drawing = false; prevX = null; prevY = null;
+      if (_bbox) {
+        events.emit('stroke', {
+          tool, color, winId: win.id,
+          bbox: { x: _bbox.minX, y: _bbox.minY, w: _bbox.maxX - _bbox.minX, h: _bbox.maxY - _bbox.minY },
+        });
+        _bbox = null;
+      }
+    };
+
+    // ── Snapshot ─────────────────────────────────────────────────────────────
+
+    const _doSnapshot = () => {
+      // Composite visual (current frame) + overlay into one canvas
+      const vr = getVisualRect();
+      const w = Math.round(vr.w) || 320;
+      const h = Math.round(vr.h) || 240;
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      try { ctx.drawImage(visualEl, 0, 0, w, h); } catch (_) {}
+      if (overlay) ctx.drawImage(overlay, 0, 0, w, h);
+      c.toBlob(blob => {
+        if (!blob) return;
+        const url  = URL.createObjectURL(blob);
+        const name = (win.querySelector('.wm-title')?.textContent?.trim() || 'snapshot') + '.png';
+        window.desktop?.add(url, { name, type: 'image' });
+      }, 'image/png');
+    };
+
+    // ── Toggle ────────────────────────────────────────────────────────────────
+
+    const toggle = () => {
+      active = !active;
+      paintBtn.classList.toggle('active', active);
+      if (active) {
+        buildOverlay();
+        buildMiniBar();
+      } else {
+        removeOverlay();
+        removeMiniBar();
+      }
+    };
+
+    // ── Titlebar button ───────────────────────────────────────────────────────
+
+    const paintBtn = document.createElement('span');
+    paintBtn.className = 'wm-btn';
+    paintBtn.title = 'Paint overlay — draw on top of this window';
+    paintBtn.innerHTML = '🖌️';
+    paintBtn.style.fontSize = '13px';
+    paintBtn.addEventListener('click', toggle);
+    const firstBtn = tb.querySelector('.wm-btn');
+    tb.insertBefore(paintBtn, firstBtn);
+
+    // Cleanup: remove overlay + minibar when window closes
+    const prevCleanup = win._wmCleanup;
+    win._wmCleanup = (...args) => {
+      removeOverlay();
+      removeMiniBar();
+      events.clear();
+      _overlayEvents.delete(events);
+      if (typeof prevCleanup === 'function') prevCleanup(...args);
+    };
+  }
+
+  // Inject per-widget undo/redo buttons into a window's titlebar.
+  // history is a WidgetHistory instance; onChange keeps button state current.
+  function _addHistoryControls(win, history) {
+    const tb = win.querySelector('.wm-titlebar');
+    if (!tb) return;
+    const mk = (icon, title, fn) => {
+      const b = document.createElement('span');
+      b.className = 'wm-btn wm-history-btn';
+      b.title = title;
+      b.innerHTML = `<i class="fa-solid ${icon}"></i>`;
+      b.style.opacity = '0.4';
+      b.addEventListener('click', fn);
+      return b;
+    };
+    const undoBtn = mk('fa-rotate-left',  'Undo (Cmd/Ctrl+Z)',       () => history.undo());
+    const redoBtn = mk('fa-rotate-right', 'Redo (Cmd/Ctrl+Shift+Z)', () => history.redo());
+    const update = () => {
+      undoBtn.style.opacity = history.canUndo() ? '1' : '0.4';
+      redoBtn.style.opacity = history.canRedo() ? '1' : '0.4';
+      undoBtn.toggleAttribute('disabled', !history.canUndo());
+      redoBtn.toggleAttribute('disabled', !history.canRedo());
+    };
+    // Hook onChange so buttons reflect state after every commit/undo/redo
+    const prevOnChange = history._onChange;
+    history._onChange = () => { prevOnChange(); update(); };
+    update();
+    const firstBtn = tb.querySelector('.wm-btn');
+    tb.insertBefore(redoBtn, firstBtn);
+    tb.insertBefore(undoBtn, redoBtn);
+    win._widgetHistory = history;
   }
 
   // Inject mute + volume controls into a window's titlebar.
@@ -878,6 +1227,7 @@ export function initWM(onContentResize) {
   // Consumed by _buildVizWindow, EQ widget (Layer 2), and viz-in-video fold-out (Layer 2).
 
   function _createSpectrumCore(canvas, getStyle, opts = {}) {
+    const getColors = opts.getColors ?? (() => ({}));
     const audioCtx = Tone.getContext().rawContext;
     const c2d = canvas.getContext('2d');
     let rafId = null;
@@ -933,7 +1283,7 @@ export function initWM(onContentResize) {
       if (!W || !H) return;
       if (_currentSrc === 'mic' && !rawAn) rawAn = window.__ar_mic_analyser;
 
-      c2d.fillStyle = '#0d0d1a';
+      c2d.fillStyle = getColors().bg ?? '#0d0d1a';
       c2d.fillRect(0, 0, W, H);
 
       let vals;
@@ -959,7 +1309,7 @@ export function initWM(onContentResize) {
         }
       } else if (style === 'wave') {
         c2d.beginPath();
-        c2d.strokeStyle = '#89dceb';
+        c2d.strokeStyle = getColors().wave ?? '#89dceb';
         c2d.lineWidth = 2 * dpr;
         for (let i = 0; i < n; i++) {
           const x = (i / (n - 1)) * W;
@@ -970,7 +1320,7 @@ export function initWM(onContentResize) {
       } else {
         const cx = W / 2, cy = H / 2, r = Math.min(W, H) * 0.28;
         c2d.beginPath();
-        c2d.strokeStyle = '#cba6f7';
+        c2d.strokeStyle = getColors().ring ?? '#cba6f7';
         c2d.lineWidth = 2 * dpr;
         for (let i = 0; i <= n; i++) {
           const a = (i / n) * Math.PI * 2 - Math.PI / 2;
@@ -1010,7 +1360,7 @@ export function initWM(onContentResize) {
   // Injects a ♪ toolbar button + collapsible spectrum panel into a video window.
   // Source defaults to the window's own video; source selector allows repurposing.
 
-  function _addVizPanel(win, body, winId) {
+  function _addVizPanel(win, body, winId, opts = {}) {
     const tb = win.querySelector('.wm-titlebar');
     if (!tb) return;
 
@@ -1033,6 +1383,17 @@ export function initWM(onContentResize) {
     }
     srcBar.appendChild(srcSel);
     srcBar.appendChild(styleSel);
+
+    if (opts.locked) srcSel.disabled = true;
+
+    const popBtn = document.createElement('button');
+    popBtn.title = 'Open in standalone window';
+    popBtn.style.cssText = 'font-size:10px;background:#1e1e2e;color:#cdd6f4;border:1px solid #313244;border-radius:3px;padding:1px 4px;cursor:pointer;flex-shrink:0;';
+    popBtn.innerHTML = '<i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px;"></i>';
+    popBtn.addEventListener('click', () => {
+      window.wm?.spawn('Visualizer', { type: 'viz', source: 'master', style: styleSel.value, w: 300, h: 160 });
+    });
+    srcBar.appendChild(popBtn);
     panel.appendChild(srcBar);
 
     // Canvas
@@ -1126,6 +1487,21 @@ export function initWM(onContentResize) {
 
     ctrl.appendChild(sourceSelect);
     ctrl.appendChild(styleSelect);
+
+    const bgPicker = document.createElement('input');
+    bgPicker.type  = 'color';
+    bgPicker.value = opts.colors?.bg   ?? '#0d0d1a';
+    bgPicker.title = 'Background color';
+    bgPicker.style.cssText = 'width:22px;height:22px;padding:0;border:none;border-radius:3px;cursor:pointer;background:transparent;';
+
+    const fgPicker = document.createElement('input');
+    fgPicker.type  = 'color';
+    fgPicker.value = opts.colors?.wave ?? '#89dceb';
+    fgPicker.title = 'Wave / ring color';
+    fgPicker.style.cssText = 'width:22px;height:22px;padding:0;border:none;border-radius:3px;cursor:pointer;background:transparent;';
+
+    ctrl.appendChild(bgPicker);
+    ctrl.appendChild(fgPicker);
     body.appendChild(ctrl);
 
     const canvas = document.createElement('canvas');
@@ -1148,7 +1524,12 @@ export function initWM(onContentResize) {
       if (!sourceSelect.value) sourceSelect.selectedIndex = 0;
     }
 
-    const core = _createSpectrumCore(canvas, () => styleSelect.value, { autoStart: false });
+    const _colors = { bg: bgPicker.value, wave: fgPicker.value, ring: fgPicker.value };
+    bgPicker.addEventListener('input', () => { _colors.bg = bgPicker.value; });
+    fgPicker.addEventListener('input', () => { _colors.wave = _colors.ring = fgPicker.value; });
+    win._vizColors = _colors;
+
+    const core = _createSpectrumCore(canvas, () => styleSelect.value, { autoStart: false, getColors: () => win._vizColors });
 
     win._vizSourceEl = sourceSelect;
     win._vizStyleEl  = styleSelect;
@@ -1161,6 +1542,7 @@ export function initWM(onContentResize) {
     const initSrc = opts.source ?? 'master';
     styleSelect.value = opts.style ?? 'wave';
     if ([...sourceSelect.options].some(o => o.value === initSrc)) sourceSelect.value = initSrc;
+    if (opts.colors) { _colors.bg = opts.colors.bg ?? _colors.bg; _colors.wave = _colors.ring = opts.colors.wave ?? _colors.wave; bgPicker.value = _colors.bg; fgPicker.value = _colors.wave; }
     core.setSource(sourceSelect.value);
     core.start();
 
@@ -1426,6 +1808,14 @@ export function initWM(onContentResize) {
     /** Snapshot current state onto undo stack (call before custom destructive ops) */
     pushHistory() { _pushHistory(); return api; },
 
+    /** Inject per-widget ↶/↷ buttons into a widget window's titlebar and wire keyboard routing.
+     *  history must be a WidgetHistory instance. win._widgetHistory is set for key dispatch. */
+    addHistoryControls(winId, history) {
+      const win = getWin(winId);
+      if (win) _addHistoryControls(win, history);
+      return api;
+    },
+
     /** Close (delete) all windows */
     closeAll() {
       _pushHistory();
@@ -1551,6 +1941,42 @@ export function initWM(onContentResize) {
         w.querySelector('.wm-title')?.textContent?.trim().toLowerCase() === t
       );
       return found?.id ?? null;
+    },
+
+    /**
+     * Return the WidgetEvents instance for the paint overlay on window `id`, or null.
+     * The overlay may not yet exist (it is created lazily on first activation), but
+     * events are registered eagerly — so hooks registered early will fire correctly.
+     * @param {string} id  — window id (use wm.getByTitle() to resolve by name)
+     * @returns {WidgetEvents|null}
+     */
+    paintEvents(id) {
+      const win = getWin(id);
+      return win?._paintEvents ?? null;
+    },
+
+    /**
+     * Register a stroke hook on the paint overlay for window `id`.
+     * @param {string}   id  — window id
+     * @param {function} fn  — called with { tool, color, winId, bbox:{x,y,w,h} }
+     */
+    onStroke(id, fn) {
+      const ev = this.paintEvents(id);
+      if (!ev) { console.warn('[wm.onStroke] no paint overlay on window', id); return; }
+      ev.on('stroke', fn);
+    },
+
+    /**
+     * Live decaying-pulse signal from the paint overlay on window `id`.
+     * @param {string} id               — window id
+     * @param {string} [event='stroke'] — 'stroke' | 'color' | 'tool' | 'clear' | '*'
+     * @param {object} [opts]           — { decay, region:{x,y,w,h} } (overlay-canvas px)
+     * @returns {{ value, velocity, stream(fn), on(fn) } | null}
+     */
+    paintSignal(id, event = 'stroke', opts = {}) {
+      const ev = this.paintEvents(id);
+      if (!ev) { console.warn('[wm.paintSignal] no paint overlay on window', id); return null; }
+      return ev.signal(event, opts);
     },
 
     /** Set a CSS filter on a window body (e.g. 'brightness(2)' to flash it). Pass null/'' to clear. */
@@ -1699,7 +2125,9 @@ export function initWM(onContentResize) {
         win.classList.add('wm-draggable-body');
       }
 
-      if ((type === 'video' || type === 'html') && opts.audio !== false) {
+      const _defaultAudio = type === 'video' ? true : (window.__ar_usesAudio ?? true);
+      const _showAudio = opts.audio !== undefined ? opts.audio !== false : _defaultAudio;
+      if ((type === 'video' || type === 'html') && _showAudio) {
         const videoEl = type === 'video' ? body.querySelector('video') : null;
         _addAudioControls(win, videoEl);
         if (videoEl) {
@@ -1707,9 +2135,24 @@ export function initWM(onContentResize) {
           _addVizPanel(win, body, id);
         }
       }
+      // Camera windows get the audio viz panel too (source locked while embedded)
+      if (type === 'camera') _addVizPanel(win, body, id, { locked: true });
 
       if (['image','video'].includes(type) && opts.src) _addCopyPathBtn(win, opts.src);
-      if (['image','video','camera','canvas','shader','viz','html','sensor'].includes(type)) _addFlipBtns(win, body);
+      if (['image','video','camera','canvas','shader','viz','html','sensor'].includes(type)) {
+        // Flip only the visual element so UI chrome (dropdowns, controls) stays upright
+        const _flipVisual =
+          type === 'image'  ? (body.querySelector('img')    || body) :
+          type === 'video'  ? (body.querySelector('video')  || body) :
+          ['camera','canvas','shader','viz','sensor'].includes(type)
+                            ? (body.querySelector('canvas') || body) :
+          body; // html — body is the output visual, flip it whole
+        _addFlipBtns(win, _flipVisual);
+        // Paint overlay — available on visual windows only (not viz/sensor/html)
+        if (['image','video','camera','canvas','shader'].includes(type)) {
+          _addPaintOverlay(win, body, _flipVisual);
+        }
+      }
       if (opts.noChrome)    win.classList.add('wm-no-chrome');
       if (opts.transparent) win.classList.add('wm-transparent');
 
@@ -1922,6 +2365,13 @@ export function initWM(onContentResize) {
       return fallback ? { fallback, name: fallback.name } : null;
     },
 
+    /** Idempotently add mute/volume controls to a window (e.g. output windows that use audio) */
+    ensureAudioControls(id) {
+      const win = document.getElementById(id);
+      if (!win || win.querySelector('.wm-audio-ctrl')) return;
+      _addAudioControls(win, null);
+    },
+
     /** Return the IndexedDB key for a file-backed window (key = winId) */
     fileKey(id) { return fileHandles.has(id) ? id : null; },
 
@@ -1956,9 +2406,34 @@ export function initWM(onContentResize) {
           if (s.transparent) existing.classList.add('wm-transparent');
           continue;
         }
+        // Widget windows (Drumpad, EQ, etc.) restored via registered factory
+        if (s.widgetType) {
+          const factory = window.__ar_widgetRestorers?.[s.widgetType];
+          if (factory) factory(s);
+          continue;
+        }
+        // Skip code-generated html windows with no static content
+        if (s.type === 'html' && !s.html) continue;
+        // Toolkit windows need app-level rebuild (content + audio:false)
+        if (s.type === 'toolkit' && typeof window.__ar_createToolkit === 'function') {
+          const tkNum = s.id === 'win-toolkit' ? 1 : parseInt(s.id.replace('win-toolkit-', '')) || 1;
+          const win = window.__ar_createToolkit(tkNum);
+          if (win) {
+            win.style.left    = `${s.x}px`;
+            win.style.top     = `${s.y}px`;
+            win.style.width   = `${s.w}px`;
+            win.style.height  = `${s.h}px`;
+            win.style.display = s.visible ? 'flex' : 'none';
+            if (s.maximized)   _toggleMaximize(win);
+            if (s.nochrome)    win.classList.add('wm-no-chrome');
+            if (s.transparent) win.classList.add('wm-transparent');
+          }
+          continue;
+        }
         const id = api.spawn(s.title, {
           id: s.id, type: s.type, x: s.x, y: s.y, w: s.w, h: s.h,
           html: s.html, src: s.src, loop: s.loop,
+          source: s.source, style: s.style, colors: s.colors,
         });
         const win = document.getElementById(id);
         if (!win) continue;
@@ -2066,3 +2541,6 @@ export function initWM(onContentResize) {
   _updateHistoryBtns(); // init state — both disabled on load
   return api;
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupPaintOverlays);

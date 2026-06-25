@@ -1,3 +1,4 @@
+import { onReset } from '../runtime/reset-registry.js';
 // desktop-files.js — file icons on the IDE desktop (project-scoped)
 //
 // Two icon types:
@@ -101,6 +102,8 @@ function _injectCSS() {
 .dt-trash.dt-trash-show { opacity: 1; }
 .dt-trash.dt-trash-hover { background: rgba(200,50,50,0.45); transform: translateX(-50%) scale(1.18); color: rgba(255,80,80,0.9); }
 .dt-icon.dt-folder-icon .dt-glyph { background: #2a2010; border: 1px solid #5a4010; font-size: 26px; color: #f0a830; }
+.dt-icon.dt-beat-icon .dt-glyph { background: #1a0d2e; border: 1px solid #4a2a6a; font-size: 26px; color: #cba6f7; }
+.dt-icon.dt-sprite-icon .dt-glyph { background: #0d1a2e; border: 1px solid #2a4a6a; font-size: 22px; color: #89b4fa; }
 .dt-thumb {
   width: 60px; height: 60px; object-fit: cover; border-radius: 5px;
   display: block; margin: 0 auto 5px; background: #222; pointer-events: none;
@@ -160,7 +163,7 @@ function _classify(name, mime = '') {
 }
 
 const _GLYPH = { image: '🖼', video: '🎬', audio: '🎵', code: '📄', file: '📁' };
-const _FA_GLYPH = { editor: 'fa-solid fa-file-code', folder: 'fa-solid fa-folder' };
+const _FA_GLYPH = { editor: 'fa-solid fa-file-code', folder: 'fa-solid fa-folder', beat: 'fa-solid fa-drum', sprite: 'fa-solid fa-paintbrush' };
 const _WM    = { image: 'image', video: 'video' };
 
 // ── Trash zone ────────────────────────────────────────────────────────────────
@@ -217,7 +220,7 @@ function _makeThumb(icon) {
 
 function _buildEl(icon) {
   const el = document.createElement('div');
-  el.className = 'dt-icon' + (icon.type === 'editor' ? ' dt-editor-icon' : icon.type === 'folder' ? ' dt-folder-icon' : '');
+  el.className = 'dt-icon' + (icon.type === 'editor' ? ' dt-editor-icon' : icon.type === 'folder' ? ' dt-folder-icon' : icon.type === 'beat' ? ' dt-beat-icon' : icon.type === 'sprite' ? ' dt-sprite-icon' : icon.type === 'paint' ? ' dt-paint-icon' : icon.type === 'ascii' ? ' dt-ascii-icon' : '');
   el.style.left = icon.x + 'px';
   el.style.top  = icon.y + 'px';
   el.dataset.dtId = icon.id;
@@ -372,6 +375,85 @@ function _activate(icon) {
     }).catch(() => {});
     return;
   }
+  if (icon.type === 'beat') {
+    fetch(icon.url).then(r => r.json()).then(data => {
+      if (window.Drumpad) {
+        const dp = new window.Drumpad({ ...data, x: (icon.x ?? 100) + 80, y: icon.y ?? 100, _desktopIconId: icon.id });
+      }
+    }).catch(() => {});
+    return;
+  }
+  if (icon.type === 'sprite') {
+    fetch(icon.url).then(r => r.json()).then(data => {
+      if (!window.SpriteEditor || !window.Sprite) return;
+      const sp = new window.Sprite({ width: data.width, height: data.height, scale: data.scale, frames: data.frames?.length ?? 1 });
+      const frameUrls = data.frames ?? [];
+      let loaded = 0;
+      const open = () => {
+        new window.SpriteEditor({ sprite: sp, title: data.title, x: (icon.x ?? 100) + 80, y: icon.y ?? 100, _desktopIconId: icon.id });
+      };
+      if (!frameUrls.length) { open(); return; }
+      frameUrls.forEach((url, i) => {
+        const img = new Image();
+        img.onload = () => {
+          sp._frames[i].getContext('2d').drawImage(img, 0, 0);
+          sp._render();
+          if (++loaded === frameUrls.length) open();
+        };
+        img.onerror = () => { if (++loaded === frameUrls.length) open(); };
+        img.src = url;
+      });
+    }).catch(() => {});
+    return;
+  }
+  if (icon.type === 'paint') {
+    fetch(icon.url).then(r => r.json()).then(data => {
+      if (!window.Paint) return;
+      const frameUrls = data.frames ?? [];
+      let loaded = 0;
+      const canvases = frameUrls.map(() => {
+        const c = document.createElement('canvas');
+        c.width  = data.width  ?? 400;
+        c.height = data.height ?? 300;
+        return c;
+      });
+      const open = () => {
+        new window.Paint({
+          width: data.width ?? 400, height: data.height ?? 300,
+          bg: data.bg ?? '#ffffff', fps: data.fps ?? 8,
+          title: data.title ?? 'Paint',
+          x: (icon.x ?? 100) + 80, y: icon.y ?? 100,
+          _desktopIconId: icon.id,
+          _frameCanvases: canvases.length ? canvases : null,
+          backdrop:     data.backdrop     ?? null,
+          backdropMode: data.backdropMode ?? 'image',
+        });
+      };
+      if (!frameUrls.length) { open(); return; }
+      frameUrls.forEach((url, i) => {
+        const img = new Image();
+        img.onload  = () => { canvases[i].getContext('2d').drawImage(img, 0, 0); if (++loaded === frameUrls.length) open(); };
+        img.onerror = () => {                                                       if (++loaded === frameUrls.length) open(); };
+        img.src = url;
+      });
+    }).catch(() => {});
+    return;
+  }
+  if (icon.type === 'ascii') {
+    fetch(icon.url).then(r => r.json()).then(data => {
+      if (!window.AsciiEditor) return;
+      new window.AsciiEditor({
+        cols: data.cols ?? 64, rows: data.rows ?? 24,
+        cellW: data.cellW ?? 10, cellH: data.cellH ?? 18,
+        fps: data.fps ?? 8, bg: data.bg ?? '#0d0208',
+        title: data.title ?? 'ASCII Editor',
+        x: (icon.x ?? 100) + 80, y: icon.y ?? 100,
+        _desktopIconId: icon.id,
+        _frames: data.frames ?? null,
+      });
+    }).catch(() => {});
+    return;
+  }
   _wm?.spawn(icon.name, { type: 'html', html: `<div style="padding:16px;color:#ccc;">${icon.name}</div>`, w: 280, h: 160 });
 }
 
@@ -517,8 +599,8 @@ function _ctx(icon, cx, cy) {
 
 // ── Internal add ──────────────────────────────────────────────────────────────
 
-function _addFileIcon(name, mime, url, dropX, dropY, content = null, iconOpts = null) {
-  const type = _classify(name, mime);
+function _addFileIcon(name, mime, url, dropX, dropY, content = null, iconOpts = null, forceType = null) {
+  const type = forceType ?? _classify(name, mime);
   let x = Math.max(4, dropX - 38), y = Math.max(4, dropY - 38);
   for (const f of _icons.values()) {
     if (f.type !== 'editor' && Math.abs(f.x - x) < 80 && Math.abs(f.y - y) < 96) x += 88;
@@ -721,6 +803,30 @@ export function restoreDesktop(icons = []) {
         const icon = _addFileIcon(saved.name, mime, url, saved.x + 38, saved.y + 38, saved.content);
         icon.x = saved.x; icon.y = saved.y;
         if (icon.el) { icon.el.style.left = icon.x + 'px'; icon.el.style.top = icon.y + 'px'; }
+      } else if (saved.type === 'beat') {
+        const blob = new Blob([saved.content], { type: 'application/json' });
+        const burl = URL.createObjectURL(blob);
+        const icon = _addFileIcon(saved.name, '', burl, saved.x + 38, saved.y + 38, saved.content, null, 'beat');
+        icon.x = saved.x; icon.y = saved.y;
+        if (icon.el) { icon.el.style.left = icon.x + 'px'; icon.el.style.top = icon.y + 'px'; }
+      } else if (saved.type === 'sprite') {
+        const blob = new Blob([saved.content], { type: 'application/json' });
+        const burl = URL.createObjectURL(blob);
+        const icon = _addFileIcon(saved.name, '', burl, saved.x + 38, saved.y + 38, saved.content, null, 'sprite');
+        icon.x = saved.x; icon.y = saved.y;
+        if (icon.el) { icon.el.style.left = icon.x + 'px'; icon.el.style.top = icon.y + 'px'; }
+      } else if (saved.type === 'paint') {
+        const blob = new Blob([saved.content], { type: 'application/json' });
+        const burl = URL.createObjectURL(blob);
+        const icon = _addFileIcon(saved.name, '', burl, saved.x + 38, saved.y + 38, saved.content, null, 'paint');
+        icon.x = saved.x; icon.y = saved.y;
+        if (icon.el) { icon.el.style.left = icon.x + 'px'; icon.el.style.top = icon.y + 'px'; }
+      } else if (saved.type === 'ascii') {
+        const blob = new Blob([saved.content], { type: 'application/json' });
+        const burl = URL.createObjectURL(blob);
+        const icon = _addFileIcon(saved.name, '', burl, saved.x + 38, saved.y + 38, saved.content, null, 'ascii');
+        icon.x = saved.x; icon.y = saved.y;
+        if (icon.el) { icon.el.style.left = icon.x + 'px'; icon.el.style.top = icon.y + 'px'; }
       }
     } else if (saved.url) {
       const icon = _addFileIcon(saved.name, '', saved.url, saved.x + 38, saved.y + 38);
@@ -733,12 +839,11 @@ export function restoreDesktop(icons = []) {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export const DesktopAPI = {
-  add(url, { name = 'file', type, x, y, rotation, tint, scale, animate, labelPosition, labelColor } = {}) {
+  add(url, { name = 'file', type, content, x, y, rotation, tint, scale, animate, labelPosition, labelColor } = {}) {
     const iconOpts = (rotation != null || tint != null || scale != null || animate != null || labelPosition != null || labelColor != null)
       ? { rotation, tint, scale, animate, labelPosition, labelColor }
       : null;
-    const icon = _addFileIcon(name, type ? '' : name, url, (x ?? 80) + 38, (y ?? 80) + 38, null, iconOpts);
-    if (type) icon.type = type;
+    const icon = _addFileIcon(name, type ? '' : name, url, (x ?? 80) + 38, (y ?? 80) + 38, content ?? null, iconOpts, type ?? null);
     return { id: icon.id, name: icon.name, type: icon.type, url: icon.url };
   },
   remove(id) {
@@ -759,6 +864,13 @@ export const DesktopAPI = {
   },
   onFile(fn) { _onFileCbs.push(fn); },
   open(id)   { const icon = _icons.get(id); if (icon) _activate(icon); },
+  updateUrl(id, newUrl, newContent) {
+    const icon = _icons.get(id);
+    if (!icon) return;
+    if (icon.url?.startsWith('blob:')) URL.revokeObjectURL(icon.url);
+    icon.url = newUrl;
+    if (newContent !== undefined) icon.content = newContent;
+  },
 };
 
 // ── Editor duplicate (shared with toolbar button) ─────────────────────────────
@@ -819,3 +931,6 @@ export function initDesktop(wmApi) {
     _saveDesktopState();
   });
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupDesktop);

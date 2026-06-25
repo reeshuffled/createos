@@ -27,10 +27,22 @@ The execution state of a single Editor Instance: `idle`, `running`, `paused`, or
 APIs that live on `window` and are accessible from all Editor Instances simultaneously: `Shader`, `ShaderFX`, `audio`, `vision`, `Camera`, `Media`, `wm`, `Color`, `onKey`, `randUni`. A shader created in Editor 1 can be referenced in Editor 2.
 
 ### Per-Editor Locals
-APIs injected as locals into each Editor Instance's IIFE at execution time, scoping them to that instance's canvas stack: `draw`, `getCanvas`, `getLayer`, `setInterval`, `clearInterval`, `setTimeout`, `clearTimeout`. These shadow any global with the same name inside the user's IIFE.
+APIs injected as locals into each Editor Instance's IIFE at execution time, scoping them to that instance's canvas stack: `draw`, `getCanvas`, `getLayer`, `getDraw`, `setInterval`, `clearInterval`, `setTimeout`, `clearTimeout`, `console`. These shadow any global with the same name inside the user's IIFE. The set is enumerated **once** in the `PER_EDITOR_LOCALS` table (`src/editor/editor-instance.js`): `_setupGlobals` creates each on `window[__ar_e{id}_<name>]` and `editorPreamble` aliases each back to a `const`, both deriving from the table so the two halves can't drift. Run-control sugar (`stop`/`stopRunning`/`pause`/`resume`) is *not* a Per-Editor Local — it has no window-global side and stays inline in `editorPreamble`.
 
 ### IIFE Isolation
 The execution strategy used to scope per-editor APIs. Each editor's `execute()` injects **Per-Editor Locals** as named variables in the IIFE wrapper before user code runs. Callbacks and timers capture these locals via closure. Globals (`Shared Globals`) remain on `window` and are unaffected.
+
+### Creative Widget
+One of the in-app authoring tools that spawns its own WM window: Paint, SpriteEditor, AsciiEditor, Drumpad. They share a **chassis** (`src/api/widget-shell.js`): `mountWidgetShell` owns the window, body styling, debounced autosave to a desktop icon, undo/redo wiring, and lifecycle; `buildFrameStrip`/`buildTransport` build the animation UI over a FrameController. Each widget supplies only its own canvas, tools, and export logic (composition, not a base class — see ADR 007).
+
+### FrameDoc
+The DOM-free animation frame model (`src/api/frame-doc.js`): an ordered list of opaque frames + a current index + transport (play/stop/fps) + onion-skin flag. Element-agnostic — Paint frames are canvases, AsciiEditor frames are cell arrays — via `createBlank`/`copyFrame`/`clearFrame`/`drawThumb` hooks. It is one implementation of the **FrameController** interface that the shared frame-strip/transport UI consumes; `SpriteFrameAdapter` (wrapping the public `Sprite` class) is the other.
+
+### Active Editor
+The Editor Instance that most recently ran (tracked as `window.__ar_active_editor_id`). The **Active Editor seam** (`src/editor/active-editor.js`) is the one place that inserts generated code into it — `insertSnippet(code)` appends at the document end, places the cursor, focuses, and falls back to the clipboard when no editor is active. Creative-widget export buttons call it instead of poking CodeMirror's `dispatch` directly.
+
+### Drawable Source
+Any object the visual APIs can treat as a frame source: a `Layer`, a `CameraStream`, a bare `<video>`/`<canvas>`, or a `GLShader`/`Shader` instance. **Resolving** a Drawable Source means reducing it to the underlying `canvas` or `video` element. The sync resolver (`resolveDrawable`) handles these object forms only; string forms (`'camera'`, image URLs) are a separate async concern layered on by `draw.backdrop` (see ADR 006).
 
 ### Editor Persistence
 Each Editor Instance saves its code to `localStorage` under key `vl-ide-code-{id}`. A manifest key `vl-ide-editors` holds the ordered list of active editor IDs. On page load all editors in the manifest are recreated with their saved code.

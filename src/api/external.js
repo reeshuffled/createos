@@ -1,3 +1,4 @@
+import { onReset } from '../runtime/reset-registry.js';
 // external.js — open data APIs as live signal sources (#38)
 // external.weather(lat, lon) → WeatherSignal (temperature/windSpeed/precipitation)
 // external.fetch(url, opts)  → raw JSON fetch helper (CORS permitting)
@@ -121,3 +122,6 @@ export const external = {
     return res.json();
   },
 };
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupExternal);

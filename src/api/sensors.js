@@ -1,3 +1,4 @@
+import { onReset } from '../runtime/reset-registry.js';
 // sensors.js — unified sensory signal bus
 // Every sensor returns a signal object with live getters + .stream(fn) RAF push.
 // Edge triggers (onMove, onShake, onButton, etc.) follow the audio.onLevel pattern.
@@ -460,3 +461,6 @@ export const SensorsAPI = {
     pattern(...durations) { navigator.vibrate?.(durations); },
   },
 };
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupSensors);

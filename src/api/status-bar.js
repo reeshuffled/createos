@@ -1,3 +1,4 @@
+import { onReset } from '../runtime/reset-registry.js';
 // status-bar.js — spawnable user-writable status bar widget (#43)
 // statusBar.set(text)  — set main text in status bar
 // statusBar.add(html)  — append HTML content
@@ -113,3 +114,6 @@ export const statusBar = {
 
   get isOpen() { return !!(_winId && document.getElementById(_winId)); },
 };
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupStatusBar);

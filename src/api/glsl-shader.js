@@ -3,6 +3,10 @@
 // or when an LLM generates GLSL because it has a much larger GLSL training corpus.
 
 import { resolveGLSL, defineGLSL, library } from './library.js';
+import { resolveDrawable } from './drawable-source.js';
+import { liveOutput } from '../runtime/keep-alive.js';
+import { mountLayerCanvas } from './layer.js';
+import { onReset } from '../runtime/reset-registry.js';
 
 const _glShaders = [];
 
@@ -134,52 +138,23 @@ export class GLShader {
   // ── Video source resolution ──────────────────────────────────────────────
 
   _resolveVideoSrc() {
-    const s = this._videoSrc;
-    if (!s) return null;
-    if (s._canvas instanceof HTMLCanvasElement) return s._canvas; // VideoLayer
-    if (s.element instanceof HTMLVideoElement) return s.element;  // CameraStream
-    return s; // raw HTMLVideoElement / HTMLCanvasElement
+    // Shared object-form resolver (ADR 006); `?? this._videoSrc` keeps the old
+    // permissive passthrough for exotic GPU-uploadable sources (ImageBitmap…).
+    return resolveDrawable(this._videoSrc) ?? this._videoSrc ?? null;
   }
 
   // ── Init ─────────────────────────────────────────────────────────────────
 
   _init() {
-    const wrapper    = window.__ar_canvasWrapper ?? document.getElementById('canvasWrapper');
-    const fsContainer = window.__ar_fsContainer  ?? document.getElementById('fsContainer');
-    const parent  = this._container ?? fsContainer ?? wrapper;
-    const sizeRef = this._container ?? wrapper ?? parent;
-    const refCanvas = (this._container ?? wrapper)?.querySelector('canvas');
-
-    this._canvas = document.createElement('canvas');
-    this._canvas.width  = refCanvas?.width  ?? 1600;
-    this._canvas.height = refCanvas?.height ?? 900;
-    Object.assign(this._canvas.style, {
-      position: 'absolute',
-      top: '0', left: '0',
-      width: '100%', height: '100%',
-      zIndex: String(this._z),
-      opacity: String(this._opacity),
-      pointerEvents: 'none',
+    const { canvas, resizeObserver } = mountLayerCanvas({
+      z: this._z, opacity: this._opacity, container: this._container,
+      onResize: (w, h) => this._gl?.viewport(0, 0, w, h),
     });
-    if (this._container) {
-      const pos = getComputedStyle(this._container).position;
-      if (pos === 'static') this._container.style.position = 'relative';
-    }
-    parent?.appendChild(this._canvas);
+    this._canvas = canvas;
+    this._resizeObserver = resizeObserver;
 
-    this._gl = this._canvas.getContext('webgl') || this._canvas.getContext('experimental-webgl');
+    this._gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
     if (!this._gl) throw new Error('WebGL not supported in this browser');
-
-    this._resizeObserver = new ResizeObserver(() => {
-      const w = Math.round((sizeRef?.clientWidth  ?? 0) * devicePixelRatio) || 1600;
-      const h = Math.round((sizeRef?.clientHeight ?? 0) * devicePixelRatio) || 900;
-      if (this._canvas.width !== w || this._canvas.height !== h) {
-        this._canvas.width  = w;
-        this._canvas.height = h;
-        this._gl.viewport(0, 0, w, h);
-      }
-    });
-    this._resizeObserver.observe(sizeRef ?? parent);
 
     this._compilePipeline();
   }
@@ -319,12 +294,11 @@ export class GLShader {
   // ── Public API (mirrors Shader) ──────────────────────────────────────────
 
   start() {
-    window.__ar_keepAlive = window.__ar_keepAlive ?? new Set();
-    window.__ar_keepAlive.add(this);
+    this._live = liveOutput(this);
     if (!this._gl) {
       try { this._init(); } catch (e) {
         console.error('GLShader error:', e.message);
-        window.__ar_keepAlive?.delete(this);
+        this._live?.release();
         return this;
       }
     }
@@ -380,7 +354,7 @@ export class GLShader {
 
   _destroy() {
     this.stop();
-    window.__ar_keepAlive?.delete(this);
+    this._live?.release();
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
     if (this._gl) {
@@ -400,3 +374,6 @@ export class GLShader {
     library.glsl(name, body);
   }
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupGLShaders);

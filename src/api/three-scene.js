@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { onReset } from '../runtime/reset-registry.js';
+import { liveOutput } from '../runtime/keep-alive.js';
 
 export { THREE };
 
@@ -52,7 +54,7 @@ export class ThreeScene {
     if (this._rafId || this._destroyed) return this;
     const wrapper = window.__ar_canvasWrapper ?? document.getElementById('canvasWrapper');
     if (wrapper && !wrapper.contains(this.canvas)) wrapper.appendChild(this.canvas);
-    window.__ar_keepAlive?.add(this);
+    this._live = liveOutput(this);
     this._startTime = performance.now();
     this._lastTime = this._startTime;
 
@@ -74,7 +76,7 @@ export class ThreeScene {
 
   stop() {
     if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
-    window.__ar_keepAlive?.delete(this);
+    this._live?.release();
     return this;
   }
 
@@ -125,3 +127,6 @@ export class ThreeScene {
     this._destroyed = true;
   }
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupThree);

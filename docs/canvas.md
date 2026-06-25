@@ -227,6 +227,33 @@ setInterval(() => draw.pixelate(cam.element, 16), 33);
 draw.pixelate(getCanvas(1), 8, 200, 100, 400, 300);
 ```
 
+### draw.backdrop
+
+`draw.backdrop(source, opts?)` — renders an image, video, camera feed, or any canvas below all draw calls. The backdrop lives on the layer *below* the draw target (default `z − 1`), so every `draw.rect/circle/text` call naturally appears on top.
+
+Source can be: a URL string, `'camera'`, `HTMLImageElement`, `HTMLVideoElement`, a `CameraStream`, `HTMLCanvasElement`, `GLShader`, `Shader`, or `Layer`.
+
+Options: `{ z, fit: 'cover'|'contain'|'stretch', loop: true }` — `fit:'cover'` (default) fills the layer, `contain` letterboxes, `stretch` ignores aspect ratio. `loop:false` skips the RAF loop (for static images).
+
+Returns `{ stop(), layer }`. Call `.stop()` to cancel a live video loop early; the backdrop is auto-cleaned on every reset.
+
+```js
+// Static photo as tracing guide
+draw.backdrop('https://example.com/photo.jpg');
+draw.text('traced!', 100, 100, 48, '#f00');
+
+// Live camera underlay
+const cam = await Camera.open();
+draw.backdrop(cam);
+draw.circle(800, 450, 50, 'rgba(255,0,0,0.5)');
+
+// Live video, contained (letterboxed)
+const vid = await Media.video('clip.mp4');
+draw.backdrop(vid, { fit: 'contain' });
+```
+
+> **Tip:** For a no-code drawing-over-video workflow, open any image/video/camera output window and click the 🖌️ titlebar button to activate the built-in paint overlay.
+
 ### draw.toASCII
 
 `draw.toASCII(canvas, opts)` → `{ el: <pre>, update(canvas) }` — converts pixel brightness to ASCII characters. Returns a `<pre>` element with a live `update()` method.

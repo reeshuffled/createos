@@ -1,4 +1,5 @@
 import * as PIXI from 'pixi.js';
+import { onReset } from '../runtime/reset-registry.js';
 
 let _app = null;
 let _userTickerFns = new Set();
@@ -65,3 +66,6 @@ export function cleanupPixi() {
 }
 
 export { PIXI };
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupPixi);

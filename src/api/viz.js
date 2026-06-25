@@ -1,5 +1,8 @@
 import * as Tone from "tone";
 import { Shader } from "./shader.js";
+import { WidgetHistory } from "./widget-history.js";
+import { onReset } from '../runtime/reset-registry.js';
+import { liveOutput } from '../runtime/keep-alive.js';
 
 const _vizs = [];
 
@@ -29,82 +32,6 @@ function _localReadFft(analyser, bins) {
 export function cleanupViz() {
   for (const v of _vizs) v._destroy();
   _vizs.length = 0;
-}
-
-// ── JS → WGSL conversion helpers ─────────────────────────────────────────────
-
-function convertExpr(expr) {
-  return expr
-    .replace(/Math\.sin\b/g, "sin")
-    .replace(/Math\.cos\b/g, "cos")
-    .replace(/Math\.tan\b/g, "tan")
-    .replace(/Math\.abs\b/g, "abs")
-    .replace(/Math\.sqrt\b/g, "sqrt")
-    .replace(/Math\.min\b/g, "min")
-    .replace(/Math\.max\b/g, "max")
-    .replace(/Math\.floor\b/g, "floor")
-    .replace(/Math\.ceil\b/g, "ceil")
-    .replace(/Math\.pow\b/g, "pow")
-    .replace(/Math\.fract\b/g, "fract")
-    .replace(/Math\.log\b/g, "log")
-    .replace(/Math\.PI\b/g, "3.14159265")
-    .replace(/Math\.E\b/g, "2.71828183")
-    // bare integer literals → float (not when already followed by '.')
-    .replace(/\b(\d+)\b/g, (m, _, offset, str) => str[offset + m.length] === "." ? m : m + ".0");
-}
-
-function splitArgs(str) {
-  const args = [];
-  let depth = 0, start = 0;
-  for (let i = 0; i < str.length; i++) {
-    const c = str[i];
-    if ("([{".includes(c)) depth++;
-    else if (")]}".includes(c)) depth--;
-    else if (c === "," && depth === 0) { args.push(str.slice(start, i).trim()); start = i + 1; }
-  }
-  if (start < str.length) args.push(str.slice(start).trim());
-  return args;
-}
-
-function convertBlock(block) {
-  return block.split(/\n|;/).map(s => s.trim()).filter(Boolean).map(stmt => {
-    const decl = stmt.match(/^(?:const|let)\s+(\w+)\s*=\s*(.+)$/);
-    if (decl) return `let ${decl[1]} = ${convertExpr(decl[2])};`;
-    const ret = stmt.match(/^return\s*\[(.+)\]$/s);
-    if (ret) return `return vec4f(${splitArgs(ret[1]).map(a => convertExpr(a.trim())).join(", ")});`;
-    return convertExpr(stmt);
-  }).join("\n  ");
-}
-
-function fnToWGSL(fn) {
-  const src = fn.toString().trim();
-  const m = src.match(/^(?:\(([^)]*)\)|([a-zA-Z_$][\w$]*))\s*=>\s*([\s\S]+)$/);
-  if (!m) throw new Error("viz.shader() expects an arrow function like (v) => [r, g, b, a]");
-
-  const params = (m[1] !== undefined ? m[1] : m[2]).split(",").map(s => s.trim()).filter(Boolean);
-  const p0 = params[0] || "v";
-  const p1 = params[1];
-
-  let rawBody = m[3].trim();
-  // Strip outer parens wrapping an array: (([...]))
-  while (rawBody.startsWith("(") && rawBody.endsWith(")")) rawBody = rawBody.slice(1, -1).trim();
-
-  const preamble = [
-    "let col = textureSample(video, videoSampler, uv);",
-    `let ${p0}: f32 = col.r;`,
-    ...(p1 ? [`let ${p1}: f32 = time;`] : []),
-  ];
-
-  let body;
-  if (!rawBody.startsWith("{")) {
-    const arrMatch = rawBody.match(/^\[(.+)\]$/s);
-    if (!arrMatch) throw new Error("viz.shader() arrow body must be an array [r, g, b, a] or a block { ... }");
-    body = `return vec4f(${splitArgs(arrMatch[1]).map(a => convertExpr(a.trim())).join(", ")});`;
-  } else {
-    body = convertBlock(rawBody.slice(1, rawBody.lastIndexOf("}")).trim());
-  }
-
-  return preamble.join("\n  ") + "\n  " + body;
 }
 
 // ── Viz shader presets ────────────────────────────────────────────────────────
@@ -242,13 +169,13 @@ export class AudioViz {
   start() {
     if (!this._canvas) this._initCanvas();
     if (!this._rafId) this._frame();
-    (window.__ar_keepAlive ??= new Set()).add(this);
+    this._live = liveOutput(this);
     return this;
   }
 
   stop() {
     if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
-    window.__ar_keepAlive?.delete(this);
+    this._live?.release();
     return this;
   }
 
@@ -277,16 +204,23 @@ export class AudioViz {
   // Returns the started Shader — call .stop()/.opacity()/.z() on it.
   shader(fnOrPreset, opts = {}) {
     if (!this._canvas) this.start();
-    let body;
     if (typeof fnOrPreset === "string") {
-      body = VIZ_SHADER_PRESETS[fnOrPreset];
+      const body = VIZ_SHADER_PRESETS[fnOrPreset];
       if (!body) throw new Error(`viz.shader(): unknown preset '${fnOrPreset}'. Available: ${Object.keys(VIZ_SHADER_PRESETS).join(", ")}`);
-    } else if (typeof fnOrPreset === "function") {
-      body = fnToWGSL(fnOrPreset);
-    } else {
-      throw new Error("viz.shader() expects an arrow function or a preset name string");
+      return new Shader(body, { video: this._canvas, ...opts }).start();
     }
-    return new Shader(body, { video: this._canvas, ...opts }).start();
+    if (typeof fnOrPreset === "function") {
+      // viz contract: (v, t?) => [r,g,b,a]. Bind the user's param names to the
+      // video sample and let the shared transpiler (jsToWGSL, via Shader) handle
+      // the body: v = col.r (pixel luminance/red), t = time.
+      const m = fnOrPreset.toString().match(/^\s*(?:\(([^)]*)\)|([a-zA-Z_$][\w$]*))\s*=>/);
+      const params = ((m && (m[1] ?? m[2])) || "v").split(",").map(s => s.trim()).filter(Boolean);
+      const bind = {};
+      if (params[0]) bind[params[0]] = "col.r";
+      if (params[1]) bind[params[1]] = "time";
+      return new Shader(fnOrPreset, { video: this._canvas, bind, ...opts }).start();
+    }
+    throw new Error("viz.shader() expects an arrow function or a preset name string");
   }
 
   get canvas() { return this._canvas; }
@@ -334,7 +268,7 @@ export class SpectrogramCanvas {
         zIndex: String(z), pointerEvents: 'none',
       });
       document.getElementById('canvasWrapper')?.appendChild(this._canvas);
-      (window.__ar_keepAlive ??= new Set()).add(this);
+      this._live = liveOutput(this);
     }
 
     _vizs.push(this);
@@ -401,7 +335,7 @@ export class SpectrogramCanvas {
 
   stop() {
     if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
-    window.__ar_keepAlive?.delete(this);
+    this._live?.release();
     return this;
   }
 
@@ -450,13 +384,13 @@ export class PianoRollViz {
   start() {
     if (!this._canvas) this._initCanvas();
     if (!this._rafId) this._frame();
-    (window.__ar_keepAlive ??= new Set()).add(this);
+    this._live = liveOutput(this);
     return this;
   }
 
   stop() {
     if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
-    window.__ar_keepAlive?.delete(this);
+    this._live?.release();
     return this;
   }
 
@@ -539,7 +473,7 @@ export class PianoRollViz {
 // Draggable handles (Low ~250Hz / Mid ~2.5kHz / High ~8kHz) control Tone.EQ3.
 // Tone-compatible: synth.chain(eq) works.
 export class EQWidget {
-  constructor({ title = 'EQ', x, y, w = 420, h = 220 } = {}) {
+  constructor({ title = 'EQ', x, y, w = 420, h = 220, low: initLow, mid: initMid, high: initHigh } = {}) {
     this._eq       = new Tone.EQ3(0, 0, 0);
     this._bands    = { low: 0, mid: 0, high: 0 };
     this._analyser = null;
@@ -549,6 +483,25 @@ export class EQWidget {
     this._drag     = null; // { band, startY, startDb }
     this._init(title, x, y, w, h);
     _vizs.push(this);
+    if (initLow  != null) this.low(initLow);
+    if (initMid  != null) this.mid(initMid);
+    if (initHigh != null) this.high(initHigh);
+    const win = document.getElementById(this._winId);
+    if (win) {
+      win._widgetType  = 'eq';
+      win._widgetState = () => ({ ...this._bands });
+    }
+
+    // Per-widget undo/redo
+    this._history = new WidgetHistory({
+      capture: () => ({ ...this._bands }),
+      restore: (snap) => {
+        if (snap.low  != null) this.low(snap.low);
+        if (snap.mid  != null) this.mid(snap.mid);
+        if (snap.high != null) this.high(snap.high);
+      },
+    });
+    window.wm?.addHistoryControls(this._winId, this._history);
   }
 
   _init(title, x, y, w, h) {
@@ -744,6 +697,7 @@ export class EQWidget {
   _setband(key, db) {
     this._bands[key] = db;
     try { this._eq[key].value = db; } catch (_) {}
+    if (!this._history?.restoring) this._history?.commit();
     return this;
   }
 
@@ -804,3 +758,6 @@ function _durToMs(dur) {
   }
   return 500;
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupViz);

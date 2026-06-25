@@ -2,7 +2,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, dr
 import { EditorState, StateEffect, StateField, RangeSetBuilder } from '@codemirror/state';
 import { Decoration } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { javascript } from '@codemirror/lang-javascript';
+import { javascript, javascriptLanguage } from '@codemirror/lang-javascript';
 import { bracketMatching, foldGutter, codeFolding, foldKeymap, indentOnInput, foldCode, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap, autocompletion, completionKeymap } from '@codemirror/autocomplete';
 import { highlightSelectionMatches } from '@codemirror/search';
@@ -14,30 +14,15 @@ import { _beginRun, _endRun } from '../runtime/api-registry.js';
 import { initInlineWidgets, inlineWidgetsExtension, toggleInlayHintsEffect, inlayHintsEnabledField } from './inline-widgets.js';
 import { searchMarksField, initSearch } from './cm-search.js';
 import { paramHintsExtension } from './param-hints.js';
+import { windowMemberCompletionSource } from './completions.js';
 import { shaderSignalPickerExtension } from './shader-signal-picker.js';
 import { getDraw } from '../api/draw.js';
 import { Layer } from '../api/layer.js';
-import { startAudio, cleanupAudio } from '../api/audio.js';
-import { cleanupShaders } from '../api/shader.js';
-import { cleanupGLShaders } from '../api/glsl-shader.js';
-import { cleanupPixi } from '../api/pixi.js';
-import { cleanupViz } from '../api/viz.js';
-import { cleanupMedia } from '../api/media.js';
-import { cleanupVideoSignal } from '../api/video-signal.js';
-import { cleanupSensors } from '../api/sensors.js';
-import { cleanupDesktop, addEditorIcon, removeEditorIcon, updateEditorIconLabel, duplicateEditor } from '../api/desktop-files.js';
-import { cleanupCameras } from '../api/camera.js';
-import { cleanupCaptures } from './editor-capture.js';
-import { cleanupPipelines } from '../api/render-pipeline.js';
-import { cleanupThree } from '../api/three-scene.js';
-import { cleanupSignalGraph } from '../api/signal-graph.js';
-import { cleanupAscii } from '../api/ascii.js';
-import { cleanupSprites } from '../api/sprite.js';
-import { cleanupPlugins } from '../api/plugin-host.js';
-import { cleanupMidi } from '../api/midi.js';
-import { cleanupExternal } from '../api/external.js';
-import { cleanupStatusBar } from '../api/status-bar.js';
-import { stopVision } from '../api/vision.js';
+import { startAudio } from '../api/audio.js';
+import { addEditorIcon, removeEditorIcon, updateEditorIconLabel, duplicateEditor } from '../api/desktop-files.js';
+// Per-subsystem cleanups are no longer imported here — each module self-registers
+// via onReset() and runResetHandlers() runs them all on reset (ADR 008).
+import { runResetHandlers } from '../runtime/reset-registry.js';
 import { freezeTimers, restoreTimers } from '../runtime/timer-manager.js';
 import {
   initBlockly, getWorkspaceCode, resizeBlockly, workspaceIsEmpty,
@@ -97,12 +82,98 @@ const errorLineField = StateField.define({
 });
 
 // Number of lines the execute() preamble adds before user code (1-based offset).
-// Structure: `(async function(){\n` + 12 preamble lines + `\nawait ...\n` = 14.
+// Structure: `(async function(){\n` + 13 preamble lines + `\nawait ...\n` = 14.
 const PREAMBLE_LINES = 14;
+
+// ── Per-Editor Locals (CONTEXT.md) ───────────────────────────────────────────
+// The single source of truth for the windowed per-editor locals. `_setupGlobals`
+// creates each on `window[__ar_e{id}_<name>]`; `editorPreamble` aliases each back
+// to a `const <name>` inside the user's IIFE. Both sides derive from this one
+// table, so the two can't drift (the silent-mismatch bug they used to risk).
+// Each entry is [name, make(instance)] → the value stored on the window global.
+// Run-control sugar (stop/pause/resume) is NOT here: it has no window-global side
+// and never grows, so it stays inline in editorPreamble.
+const PER_EDITOR_LOCALS = [
+  ['draw',          (i) => i.draw],
+  ['getCanvas',     (i) => (z = 0) => i._getLayerCanvas(z)],
+  ['getLayer',      (i) => (z) => i._getLayerObj(z)],
+  ['getDraw',       (i) => (z = 0) => i._getDraw(z)],
+  ['setInterval',   (i) => (cb, delay, ...args) => {
+    const id = i._native.setInterval(cb, delay, ...args);
+    i._intervals.set(id, { cb, delay, args });
+    return id;
+  }],
+  ['clearInterval', (i) => (id) => { i._intervals.delete(id); i._native.clearInterval(id); }],
+  ['setTimeout',    (i) => (cb, delay = 0, ...args) => {
+    let tid;
+    const wrapped = (...a) => { i._timeouts.delete(tid); cb(...a); };
+    tid = i._native.setTimeout(wrapped, delay, ...args);
+    i._timeouts.set(tid, { cb, delay, createdAt: Date.now(), args });
+    return tid;
+  }],
+  ['clearTimeout',  (i) => (tid) => { i._timeouts.delete(tid); i._native.clearTimeout(tid); }],
+  ['console',       (i) => _makeEditorConsole(i)],
+];
+
+// Per-editor console: routes user console.* to the instance's embedded console
+// while preserving native logging and filtering MediaPipe's WASM chatter.
+function _makeEditorConsole(self) {
+  const _log = console.log.bind(console);
+  const _error = console.error.bind(console);
+  return {
+    log: (...args) => {
+      _log(...args);
+      const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' ');
+      if (!_isMediaPipeLog(msg)) self._appendConsole(msg);
+    },
+    error: (...args) => {
+      _error(...args);
+      const msg = args.map(a => a instanceof Error ? a.message : (typeof a === 'object' && a !== null ? JSON.stringify(a, null, 2) : String(a))).join(' ');
+      if (!_isMediaPipeLog(msg)) self._appendConsole(`<span class="ar-console-err">${msg}</span>`);
+    },
+    warn: (...args) => {
+      _log(...args);
+      const msg = args.map(a => String(a)).join(' ');
+      self._appendConsole(`<span class="ar-console-warn">${msg}</span>`);
+    },
+    clear: () => self.clearConsole(),
+  };
+}
+
+// Build the execute() preamble: PER_EDITOR_LOCALS aliased to consts, then the
+// inline run-control sugar. Pure (id → string) so it's unit-testable.
+// Must stay PREAMBLE_LINES-1 lines (see PREAMBLE_LINES above).
+export function editorPreamble(id) {
+  const ns = `__ar_e${id}`;
+  const windowed = PER_EDITOR_LOCALS.map(([name]) => `const ${name} = window.${ns}_${name};`);
+  const control = [
+    `const stop        = () => window.__ar_instances?.get(${id})?.stopRunning();`,
+    `const stopRunning = stop;`,
+    `const pause       = () => window.__ar_instances?.get(${id})?.pauseRunning();`,
+    `const resume      = () => window.__ar_instances?.get(${id})?.resumeRunning();`,
+  ];
+  return [...windowed, ...control].join('\n');
+}
 
 const STORAGE_PREFIX      = 'vl-ide-code-';
 const EXEC_STATE_PREFIX   = 'vl-ide-exec-';
 const TITLE_PREFIX        = 'vl-ide-title-';
+const _OUTPUT_SIZE_KEY    = 'vl-output-size';
+
+/** Read persisted output-window geometry. Returns {x,y,w,h} or null. */
+function _getOutputGeom() {
+  try { return JSON.parse(localStorage.getItem(_OUTPUT_SIZE_KEY) || 'null'); } catch (_) { return null; }
+}
+/** Persist output-window geometry from a live DOM element. */
+function _saveOutputGeom(win) {
+  try {
+    const x = parseInt(win.style.left)   || 0;
+    const y = parseInt(win.style.top)    || 0;
+    const w = parseInt(win.style.width)  || 640;
+    const h = parseInt(win.style.height) || 400;
+    localStorage.setItem(_OUTPUT_SIZE_KEY, JSON.stringify({ x, y, w, h }));
+  } catch (_) {}
+}
 const LEGACY_KEY = 'vl-ide-code';
 
 const ICONS = {
@@ -126,6 +197,7 @@ export class EditorInstance {
     this.btnState = 'idle';
     this.currentScript = null;
     this.idleWatcher = null;
+    this._everHadContent = false; // set true when editor first has non-empty content
     this._intervals = new Map();
     this._timeouts = new Map();
     this._listeners = [];
@@ -308,6 +380,7 @@ export class EditorInstance {
       localStorage.setItem(storageKey, localStorage.getItem(LEGACY_KEY));
     }
     const initialCode = localStorage.getItem(storageKey) ?? this._defaultCode;
+    if (initialCode.trim().length > 0) this._everHadContent = true;
 
     let saveTimer;
     let _openSearch = null;
@@ -318,6 +391,7 @@ export class EditorInstance {
         extensions: [
           history({ minDepth: 50, newGroupDelay: 500 }),
           javascript(),
+          javascriptLanguage.data.of({ autocomplete: windowMemberCompletionSource }),
           syntaxHighlighting(defaultHighlightStyle),
           lineNumbers(),
           highlightActiveLine(),
@@ -343,6 +417,8 @@ export class EditorInstance {
             saveTimer = this._native.setTimeout(
               () => localStorage.setItem(storageKey, this.cm.state.doc.toString()), 500
             );
+            if (!this._everHadContent && this.cm.state.doc.toString().trim().length > 0)
+              this._everHadContent = true;
             if (this._autoExec) {
               this._native.clearTimeout(this._autoExecTimer);
               this._autoExecTimer = this._native.setTimeout(() => {
@@ -508,11 +584,12 @@ export class EditorInstance {
     });
 
     bar.appendChild(modeToggle);
-    bar.appendChild(this.executeBtn);
-    bar.appendChild(this.stopBtn);
     bar.appendChild(this.clearCanvasBtn);
     bar.appendChild(this.consoleToggleBtn);
     bar.appendChild(inlayBtn);
+    this.executeBtn.style.marginLeft = 'auto';
+    bar.appendChild(this.executeBtn);
+    bar.appendChild(this.stopBtn);
     bar.appendChild(this._autoExecBtn);
     return bar;
   }
@@ -568,11 +645,21 @@ export class EditorInstance {
     // Auto-create a live-linked desktop icon for this editor
     addEditorIcon(this.id, this.editorWinId, this.title);
 
-    // Close = hide (code preserved, icon re-opens it)
+    // Close = hide (code preserved, icon re-opens it).
+    // Exception: brand-new editor with no content → destroy so icon is removed.
     editorWin._wmOnClose = () => {
       if (this.btnState === 'running' || this.btnState === 'paused') {
         this.reset();
         this._setIdle();
+      }
+      const hasContent = this._everHadContent ||
+        this.cm.state.doc.toString().trim().length > 0 ||
+        (this.blocksMode && this.blocklyWorkspace &&
+          this.blocklyWorkspace.getAllBlocks(false).length > 0);
+      if (!hasContent && this.id !== 1) {
+        // Never had content and not the primary editor → clean up completely
+        this.destroy();
+        return;
       }
       editorWin.style.display = 'none';
       const canvasWin = document.getElementById(this.canvasWinId);
@@ -600,11 +687,16 @@ export class EditorInstance {
 
   _ensureOutputWin() {
     if (document.getElementById(this.canvasWinId)) return;
-    this._wm.spawn(`${this.title} — Output`, {
-      id: this.canvasWinId, type: 'html', html: '', w: 640, h: 400,
-    });
+    // Reuse last known output window geometry (persisted across sessions)
+    const savedGeom = _getOutputGeom();
+    const outW = savedGeom?.w || 640;
+    const outH = savedGeom?.h || 400;
+    const spawnOpts = { id: this.canvasWinId, type: 'html', html: '', w: outW, h: outH, audio: false };
+    // Pass saved x/y when available so spawn places the window correctly
+    if (savedGeom?.x != null) { spawnOpts.x = savedGeom.x; spawnOpts.y = savedGeom.y ?? 0; }
+    this._wm.spawn(`${this.title} — Output`, spawnOpts);
     const canvasWin = document.getElementById(this.canvasWinId);
-    // Start hidden so _showOutputWin() always runs its positioning logic
+    // Start hidden so _showOutputWin() runs its positioning logic (or restores saved geom)
     canvasWin.style.display = 'none';
     canvasWin.classList.add('wm-draggable-body');
     if (document.body.classList.contains('ar-embed')) canvasWin.classList.add('ar-embed-output');
@@ -613,12 +705,17 @@ export class EditorInstance {
     canvasBody.appendChild(this.fsContainer);
     canvasWin._wmSpawnOpts = { title: `Output mirror`, type: 'canvas', z: 0 };
     canvasWin._wmCleanup = () => {
+      // Persist geometry before the window is removed so the next open restores it
+      _saveOutputGeom(canvasWin);
       this._keepAlive.delete(canvasWin);
       if (this.btnState === 'running' || this.btnState === 'paused') {
         this.reset();
         this._setIdle();
       }
     };
+
+    // Save full geometry (including position) on resize/drag so the next window reuses it
+    new ResizeObserver(() => { _saveOutputGeom(canvasWin); }).observe(canvasWin);
 
     // Mirror button — spawns a composited copy of all layers
     const mirrorBtn = document.createElement('span');
@@ -629,12 +726,17 @@ export class EditorInstance {
     mirrorBtn.addEventListener('click', e => {
       e.stopPropagation();
       const mirrorId = `win-mirror-${this.id}${_mirrorCount++ ? `-${_mirrorCount}` : ''}`;
+      // Mirror inherits master's current size and spawns slightly offset so it's not hidden underneath
+      const mw = parseInt(canvasWin.style.width)  || 480;
+      const mh = parseInt(canvasWin.style.height) || 270;
+      const mx = (parseInt(canvasWin.style.left)  || 0) + 24;
+      const my = (parseInt(canvasWin.style.top)   || 0) + 24;
       this._wm.spawn(`${this.title} — Mirror`, {
         id: mirrorId,
         type: 'canvas',
         getLayers: () => [...this.fsContainer.querySelectorAll('canvas')]
           .sort((a, b) => (parseInt(a.style.zIndex) || 0) - (parseInt(b.style.zIndex) || 0)),
-        w: 480, h: 270,
+        w: mw, h: mh, x: mx, y: my,
       });
     });
     const firstBtn = canvasWin.querySelector('.wm-titlebar .wm-btn');
@@ -645,53 +747,9 @@ export class EditorInstance {
 
   _setupGlobals() {
     const ns = `__ar_e${this.id}`;
-    window[`${ns}_draw`] = this.draw;
-    window[`${ns}_getCanvas`] = (z = 0) => this._getLayerCanvas(z);
-    window[`${ns}_getLayer`] = (z) => this._getLayerObj(z);
-    window[`${ns}_getDraw`]   = (z = 0) => this._getDraw(z);
-
-    const self = this;
-    window[`${ns}_setInterval`] = (cb, delay, ...args) => {
-      const id = self._native.setInterval(cb, delay, ...args);
-      self._intervals.set(id, { cb, delay, args });
-      return id;
-    };
-    window[`${ns}_clearInterval`] = (id) => {
-      self._intervals.delete(id);
-      self._native.clearInterval(id);
-    };
-    window[`${ns}_setTimeout`] = (cb, delay = 0, ...args) => {
-      let tid;
-      const wrapped = (...a) => { self._timeouts.delete(tid); cb(...a); };
-      tid = self._native.setTimeout(wrapped, delay, ...args);
-      self._timeouts.set(tid, { cb, delay, createdAt: Date.now(), args });
-      return tid;
-    };
-    window[`${ns}_clearTimeout`] = (tid) => {
-      self._timeouts.delete(tid);
-      self._native.clearTimeout(tid);
-    };
-
-    const _log = console.log.bind(console);
-    const _error = console.error.bind(console);
-    window[`${ns}_console`] = {
-      log: (...args) => {
-        _log(...args);
-        const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' ');
-        if (!_isMediaPipeLog(msg)) self._appendConsole(msg);
-      },
-      error: (...args) => {
-        _error(...args);
-        const msg = args.map(a => a instanceof Error ? a.message : (typeof a === 'object' && a !== null ? JSON.stringify(a, null, 2) : String(a))).join(' ');
-        if (!_isMediaPipeLog(msg)) self._appendConsole(`<span class="ar-console-err">${msg}</span>`);
-      },
-      warn: (...args) => {
-        _log(...args);
-        const msg = args.map(a => String(a)).join(' ');
-        self._appendConsole(`<span class="ar-console-warn">${msg}</span>`);
-      },
-      clear: () => self.clearConsole(),
-    };
+    for (const [name, make] of PER_EDITOR_LOCALS) {
+      window[`${ns}_${name}`] = make(this);
+    }
   }
 
   _refreshDraw() {
@@ -953,7 +1011,8 @@ export class EditorInstance {
   reset() {
     _endRun(); // restore any registerAPI() overrides made during this run
     this.cm.dispatch({ effects: setErrorLineEffect.of(null) });
-    window.__ar_paused = false;
+    window.__ar_paused    = false;
+    window.__ar_usesAudio = undefined;
     this._pausedState = null;
     this._listeners.forEach(({ target, type, handler, options }) =>
       target?.removeEventListener(type, handler, options));
@@ -962,27 +1021,7 @@ export class EditorInstance {
     for (const id of this._timeouts.keys()) this._native.clearTimeout(id);
     this._intervals.clear();
     this._timeouts.clear();
-    stopVision();
-    cleanupAudio();
-    cleanupShaders();
-    cleanupGLShaders();
-    cleanupPipelines();
-    cleanupPixi();
-    cleanupViz();
-    cleanupMedia();
-    cleanupVideoSignal();
-    cleanupSensors();
-    cleanupThree();
-    cleanupSignalGraph();
-    cleanupAscii();
-    cleanupSprites();
-    cleanupPlugins();
-    cleanupMidi();
-    cleanupExternal();
-    cleanupStatusBar();
-    cleanupDesktop();
-    cleanupCameras();
-    cleanupCaptures();
+    runResetHandlers();   // every subsystem's cleanup, registered via onReset (ADR 008)
     this._keepAlive = new Set();
     this._hadOutput = false;
     window.__ar_keepAlive = this._keepAlive;
@@ -997,6 +1036,7 @@ export class EditorInstance {
     this._layers = new Map([[0, this.mainCanvas]]);
     this._getLayerCanvas = this._makeGetLayerCanvas();
     this._refreshDraw();
+    if (this.idleWatcher) { this._native.clearInterval(this.idleWatcher); }
     this.idleWatcher = null;
     this._setIdle();
   }
@@ -1005,7 +1045,8 @@ export class EditorInstance {
   _softReset() {
     _endRun();
     this.cm.dispatch({ effects: setErrorLineEffect.of(null) });
-    window.__ar_paused = false;
+    window.__ar_paused    = false;
+    window.__ar_usesAudio = undefined;
     this._pausedState = null;
     this._listeners.forEach(({ target, type, handler, options }) =>
       target?.removeEventListener(type, handler, options));
@@ -1014,27 +1055,7 @@ export class EditorInstance {
     for (const id of this._timeouts.keys()) this._native.clearTimeout(id);
     this._intervals.clear();
     this._timeouts.clear();
-    stopVision();
-    cleanupAudio();
-    cleanupShaders();
-    cleanupGLShaders();
-    cleanupPipelines();
-    cleanupPixi();
-    cleanupViz();
-    cleanupMedia();
-    cleanupVideoSignal();
-    cleanupSensors();
-    cleanupThree();
-    cleanupSignalGraph();
-    cleanupAscii();
-    cleanupSprites();
-    cleanupPlugins();
-    cleanupMidi();
-    cleanupExternal();
-    cleanupStatusBar();
-    cleanupDesktop();
-    cleanupCameras();
-    cleanupCaptures();
+    runResetHandlers();   // every subsystem's cleanup, registered via onReset (ADR 008)
     // Preserve _keepAlive and _hadOutput so the output window stays alive
     if (this.currentScript) { document.body.removeChild(this.currentScript); this.currentScript = null; }
     this._layerObjects.forEach(layer => layer.reset());
@@ -1046,24 +1067,36 @@ export class EditorInstance {
     this._layers = new Map([[0, this.mainCanvas]]);
     this._getLayerCanvas = this._makeGetLayerCanvas();
     this._refreshDraw();
+    if (this.idleWatcher) { this._native.clearInterval(this.idleWatcher); }
     this.idleWatcher = null;
     this._setIdle();
   }
 
-  _showOutputWin() {
+  _showOutputWin({ audio = false } = {}) {
     this._ensureOutputWin();
+    if (audio) this._wm.ensureAudioControls(this.canvasWinId);
     const outputWin = document.getElementById(this.canvasWinId);
     const editorWin = document.getElementById(this.editorWinId);
     if (!outputWin || outputWin.style.display === 'flex') return;
-    const desk = document.getElementById('desktop');
-    const dw = desk.offsetWidth, dh = desk.offsetHeight;
-    const editorLeft = editorWin?.offsetLeft ?? 0;
-    const editorNewW = Math.round((dw - editorLeft) * 0.45);
-    if (editorWin) editorWin.style.width = `${editorNewW}px`;
-    outputWin.style.left   = `${editorLeft + editorNewW}px`;
-    outputWin.style.top    = '0px';
-    outputWin.style.width  = `${dw - editorLeft - editorNewW}px`;
-    outputWin.style.height = `${dh}px`;
+    const savedGeom = _getOutputGeom();
+    if (savedGeom?.x != null) {
+      // Restore exact saved geometry — window comes back where the user left it
+      outputWin.style.left   = `${savedGeom.x}px`;
+      outputWin.style.top    = `${savedGeom.y ?? 0}px`;
+      outputWin.style.width  = `${savedGeom.w}px`;
+      outputWin.style.height = `${savedGeom.h}px`;
+    } else {
+      // First-run / legacy: auto-layout next to the editor
+      const desk = document.getElementById('desktop');
+      const dw = desk.offsetWidth, dh = desk.offsetHeight;
+      const editorLeft = editorWin?.offsetLeft ?? 0;
+      const editorNewW = Math.round((dw - editorLeft) * 0.45);
+      if (editorWin) editorWin.style.width = `${editorNewW}px`;
+      outputWin.style.left   = `${editorLeft + editorNewW}px`;
+      outputWin.style.top    = '0px';
+      outputWin.style.width  = `${dw - editorLeft - editorNewW}px`;
+      outputWin.style.height = `${dh}px`;
+    }
     outputWin.style.display = 'flex';
     this._keepAlive.add(outputWin);
     this._hadOutput = true;
@@ -1096,8 +1129,10 @@ export class EditorInstance {
       _apiHints.usesShaderFX || _apiHints.usesThree ||
       (_apiHints.usesShader && _apiHints.shaderStartCalled) ||
       (_apiHints.usesGLShader && _apiHints.shaderStartCalled);
-    if (_needsCanvas) this._showOutputWin();
+    // Show output window; pass usesAudio so volume controls only appear for audio scripts
+    if (_needsCanvas) this._showOutputWin({ audio: _apiHints.usesAudio });
 
+    window.__ar_usesAudio  = _apiHints.usesAudio;
     window.__ar_audioReady = _apiHints.usesAudio ? startAudio() : Promise.resolve();
     if (!soft) {
       this._keepAlive = new Set();
@@ -1117,21 +1152,7 @@ export class EditorInstance {
     catch (_) { protected_code = raw; }
 
     const ns = `__ar_e${this.id}`;
-    const preamble = [
-      `const draw        = window.${ns}_draw;`,
-      `const getCanvas   = window.${ns}_getCanvas;`,
-      `const getLayer    = window.${ns}_getLayer;`,
-      `const getDraw     = window.${ns}_getDraw;`,
-      `const setInterval = window.${ns}_setInterval;`,
-      `const clearInterval = window.${ns}_clearInterval;`,
-      `const setTimeout  = window.${ns}_setTimeout;`,
-      `const clearTimeout = window.${ns}_clearTimeout;`,
-      `const console     = window.${ns}_console;`,
-      `const stop        = () => window.__ar_instances?.get(${this.id})?.stopRunning();`,
-      `const stopRunning = stop;`,
-      `const pause       = () => window.__ar_instances?.get(${this.id})?.pauseRunning();`,
-      `const resume      = () => window.__ar_instances?.get(${this.id})?.resumeRunning();`,
-    ].join('\n');
+    const preamble = editorPreamble(this.id);
 
     const code =
       `(async function(){\n${preamble}\nawait window.__ar_audioReady;\n${protected_code}\n})()` +
@@ -1155,8 +1176,11 @@ export class EditorInstance {
     removeEditorIcon(this.id);
 
     EditorInstance.removeFromManifest(this.id);
-    try { localStorage.removeItem(EXEC_STATE_PREFIX + this.id); } catch (_) {}
-    try { localStorage.removeItem(TITLE_PREFIX + this.id); } catch (_) {}
+    try { localStorage.removeItem(STORAGE_PREFIX     + this.id); } catch (_) {}
+    try { localStorage.removeItem(EXEC_STATE_PREFIX  + this.id); } catch (_) {}
+    try { localStorage.removeItem(TITLE_PREFIX       + this.id); } catch (_) {}
+    try { localStorage.removeItem(`vl-autoexec-${this.id}`);     } catch (_) {}
+    try { localStorage.removeItem(`vl-blocks-open-${this.id}`);  } catch (_) {}
 
     const editorWin = document.getElementById(this.editorWinId);
     const canvasWin = document.getElementById(this.canvasWinId);

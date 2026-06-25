@@ -18,8 +18,8 @@ function walk(node, visitor) {
 
 // ── Text-level fast scan ──────────────────────────────────────────────────────
 
-const API_PATTERNS = {
-  usesAudio:    /\baudio\s*\./,
+export const API_PATTERNS = {
+  usesAudio:    /\baudio\s*\.|\bpattern\s*\(|\bpat\s*\(|\bstack\s*\(|\bnew\s+Pattern\b|\bnew\s+Drumpad\b/,
   usesShader:   /\bnew\s+Shader\b/,
   usesGLShader: /\bnew\s+GLShader\b/,
   usesShaderFX: /\bShaderFX\b/,

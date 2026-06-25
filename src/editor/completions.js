@@ -1,3 +1,5 @@
+import { completionPath } from '@codemirror/lang-javascript';
+
 export const TOOLKIT_CATEGORIES = [
   {
     name: "Draw",
@@ -85,6 +87,18 @@ export const TOOLKIT_CATEGORIES = [
         label: "image",
         code: "const img = await Media.image('https://example.com/photo.jpg');\ndraw.image(img, x, y, w, h);",
         hint: "Draw an image — load with Media.image(), then draw.image(img, x, y, w?, h?)",
+      },
+      {
+        label: "backdrop (image/video underlay)",
+        code: "draw.backdrop('https://example.com/photo.jpg');\n// now draw on top:\ndraw.circle(400, 300, 50, 'red');",
+        hint: "draw.backdrop(source) — renders an image, video, camera, or canvas on the layer below so all draw calls appear on top. Accepts a URL string, 'camera', HTMLImageElement, HTMLVideoElement, CameraStream, or any canvas/shader. Returns { stop(), layer }. stop() cancels a live video loop. Cleaned up automatically on reset.",
+        tags: ["draw", "backdrop", "image", "video", "camera", "underlay", "overlay", "background", "trace", "annotate"],
+      },
+      {
+        label: "backdrop — camera underlay",
+        code: "const cam = await Camera.open();\ndraw.backdrop(cam);\n\nsetInterval(() => {\n  // draw on top of live camera each frame\n  draw.circle(\n    draw.width/2 + Math.cos(Date.now()/500)*100,\n    draw.height/2, 40, 'rgba(255,0,0,0.7)'\n  );\n}, 16);",
+        hint: "draw.backdrop(cam) — live camera feed as a background layer. Use Camera.open() to get a CameraStream, then draw shapes/text on top.",
+        tags: ["draw", "backdrop", "camera", "live", "ar", "augmented", "overlay"],
       },
       {
         label: "alpha",
@@ -662,6 +676,36 @@ audio.start();`,
         hint: "audio.eqWidget() spawns a floating 3-band EQ panel and returns a Tone-compatible node. Chain it: synth.chain(eq). Control programmatically: eq.low(dB), eq.mid(dB), eq.high(dB).",
       },
       {
+        label: "audio.drumpad",
+        code: "const dp = audio.drumpad({ title: 'Drum Pad', w: 500, h: 360 });\n// Click pads or press q/w/e/r/a/s/d/f\n// Toggle steps in the sequencer, then hit ▶ Play\n// Programmatic control:\n// dp.bpm(128)\n// dp.pattern(0, 'x . . x x . . .') // kick\n// dp.pattern(1, '. . x . . . x .') // snare",
+        hint: "audio.drumpad(opts) — 8-pad drum machine with 16-step sequencer. Pads: Kick/Snare/HH-Cl/HH-Op/Clap/Tom-L/Tom-H/Cymbal. Keys: q w e r / a s d f. Methods: .bpm(n), .step(vi,si,bool), .pattern(vi, 'x . . x'). Events: .onHit(fn), .onPad(voice,fn), .onStep(fn), .signal(voice?,{decay?})→sig.",
+        tags: ["drum", "beat", "sequencer", "percussion"],
+      },
+      {
+        label: "dp.onPad — react to a specific drum",
+        code: "const dp = audio.drumpad();\ndp.onPad('kick', ({ source }) => {\n  draw.circle(400, 225, 80, 'red');\n  setTimeout(() => draw.clear(), 80);\n});\n// voice = index 0-7 or name: 'kick','snare','hhc','hho','clap','tomL','tomH','cym'",
+        hint: "dp.onPad(voice, fn) — fire fn({vi,id,label,source,step}) only for one pad. source: 'pad'|'key'|'seq'. Returns dp.",
+        tags: ["drum", "event", "hook", "reactive", "onPad"],
+      },
+      {
+        label: "dp.onHit — any pad hit",
+        code: "const dp = audio.drumpad();\ndp.onHit(({ label, source }) => {\n  console.log(label, 'hit via', source);\n});",
+        hint: "dp.onHit(fn) — fire fn({vi,id,label,source,step}) on any pad hit. Returns dp.",
+        tags: ["drum", "event", "hook", "onHit"],
+      },
+      {
+        label: "dp.onStep — sequencer clock",
+        code: "const dp = audio.drumpad();\ndp.onStep(({ step, activeVoices }) => {\n  draw.bg(`hsl(${step * 22},60%,10%)`);\n});\n// fires once per sequencer step (0-15) while playing",
+        hint: "dp.onStep(fn) — fire fn({step,activeVoices:[vi…]}) once per sequencer step while playing.",
+        tags: ["drum", "sequencer", "step", "clock", "onStep"],
+      },
+      {
+        label: "dp.signal — decaying-pulse visual",
+        code: "const dp = audio.drumpad();\nconst sig = dp.signal('kick', { decay: 300 }); // 0-1, decays after each hit\n\nconst s = new GLShader(`\n  void main() {\n    float v = custom.x;\n    gl_FragColor = vec4(v, v*0.2, 0.0, 1.0);\n  }\n`);\ns.start();\n\ndp.pattern(0, 'x . . x x . . .'); // kick\nsetInterval(() => s.set(sig.value, 0, 0, 0), 16);",
+        hint: "dp.signal(voice?,{decay?}) → {value,stream(fn),onHit(fn)}. value=1 on hit, decays to 0. voice = index or name, omit for any pad.",
+        tags: ["drum", "signal", "reactive", "shader", "visual", "decay"],
+      },
+      {
         label: "file.waveform",
         code: "const file = audio.load('https://example.com/sound.mp3');\nawait file.ready;\nconst wv = file.waveform({ width: 640, height: 80 });\ndocument.getElementById('canvasWrapper')?.appendChild(wv);\nObject.assign(wv.style, { position:'absolute', bottom:'10px', left:'50%', transform:'translateX(-50%)' });\nfile.loop(true).play();",
         hint: "file.waveform(opts) → canvas with static waveform + live playhead. Click to seek. opts: { width, height, color, bg }.",
@@ -864,31 +908,31 @@ audio.start();`,
     commands: [
       {
         label: "ASCII camera",
-        code: "const cam = await Camera.open();\npipe(cam)\n  .ascii({ cols: 120, color: '#00ff41', bg: '#0d0208' })\n  .show('ASCII Cam', { w: 700, h: 500 });",
-        hint: "pipe(source) starts a render pipeline. .ascii(opts) renders ASCII art to a canvas. .show(title, {w,h}) spawns a window.",
-        tags: ["pipe", "ascii", "camera", "pipeline"],
+        code: "pipe(Source.camera)\n  .ascii({ cols: 120, color: '#00ff41', bg: '#0d0208' })\n  .show('ASCII Cam', { w: 700, h: 500 });",
+        hint: "pipe(Source.camera) opens the camera and starts a render pipeline — no await needed. .ascii(opts) renders ASCII art. .show(title, {w,h}) spawns a window.",
+        tags: ["pipe", "ascii", "camera", "pipeline", "source"],
       },
       {
         label: "ASCII + shader",
-        code: "const cam = await Camera.open();\npipe(cam)\n  .ascii({ cols: 150, color: '#00ff41', bg: '#0d0208' })\n  .glshader(`\n    vec4 a = texture2D(uVideo, uv);\n    float l = dot(a.rgb, vec3(.299,.587,.114));\n    vec3 rain = .5+.5*cos(6.28*(uv.y+time*.4+vec3(0,.33,.67)));\n    gl_FragColor = vec4(rain*l, 1.);\n  `)\n  .show('ASCII Cam', { w: 700, h: 500 });",
+        code: "pipe(Source.camera)\n  .ascii({ cols: 150, color: '#00ff41', bg: '#0d0208' })\n  .glshader(`\n    vec4 a = texture2D(uVideo, uv);\n    float l = dot(a.rgb, vec3(.299,.587,.114));\n    vec3 rain = .5+.5*cos(6.28*(uv.y+time*.4+vec3(0,.33,.67)));\n    gl_FragColor = vec4(rain*l, 1.);\n  `)\n  .show('ASCII Cam', { w: 700, h: 500 });",
         hint: "Chain ASCII then a GLSL color shader — one raf loop, auto-cleanup on reset. No captureWindow needed.",
         tags: ["pipe", "ascii", "glshader", "shader", "pipeline", "camera"],
       },
       {
         label: "camera → shader",
-        code: "const cam = await Camera.open();\npipe(cam)\n  .glshader(`\n    vec4 c = texture2D(uVideo, uv);\n    float g = dot(c.rgb, vec3(.299,.587,.114));\n    gl_FragColor = vec4(g, g*0.5, 1.0-g, 1.0);\n  `)\n  .show('Camera Shader', { w: 700, h: 500 });",
+        code: "pipe(Source.camera)\n  .glshader(`\n    vec4 c = texture2D(uVideo, uv);\n    float g = dot(c.rgb, vec3(.299,.587,.114));\n    gl_FragColor = vec4(g, g*0.5, 1.0-g, 1.0);\n  `)\n  .show('Camera Shader', { w: 700, h: 500 });",
         hint: "Direct camera → GLShader pipeline. uVideo samples the camera feed.",
         tags: ["pipe", "glshader", "shader", "camera", "pipeline"],
       },
       {
         label: "pixelate camera",
-        code: "const cam = await Camera.open();\npipe(cam)\n  .pixelate({ blockSize: 20 })\n  .show('Pixelate', { w: 700, h: 500 });",
+        code: "pipe(Source.camera)\n  .pixelate({ blockSize: 20 })\n  .show('Pixelate', { w: 700, h: 500 });",
         hint: "Mosaic/pixelate stage — blockSize controls pixel block size.",
         tags: ["pipe", "pixelate", "camera", "pipeline"],
       },
       {
         label: "fx filter",
-        code: "const cam = await Camera.open();\npipe(cam)\n  .fx('hue-rotate(120deg) saturate(2)')\n  .show('FX', { w: 700, h: 500 });",
+        code: "pipe(Source.camera)\n  .fx('hue-rotate(120deg) saturate(2)')\n  .show('FX', { w: 700, h: 500 });",
         hint: ".fx(cssFilter) applies any CSS filter string — blur, hue-rotate, invert, saturate, sepia, etc.",
         tags: ["pipe", "fx", "filter", "camera", "pipeline"],
       },
@@ -1586,7 +1630,7 @@ audio.start();`,
     ],
   },
   {
-    name: "Sprite / Mosaic",
+    name: "Pixel Art",
     commands: [
       {
         label: "pixel-art sprite",
@@ -1595,10 +1639,10 @@ audio.start();`,
         tags: ["sprite", "pixel", "art", "animation", "mosaic"],
       },
       {
-        label: "mosaic / paint single frame",
-        code: "const sp = new Sprite({ width: 16, height: 16, scale: 10 });\n// Draw with raw 2d context\nconst ctx = sp.ctx(); // 16×16 2d context\nctx.fillStyle = '#ff0';\nctx.fillRect(4, 4, 8, 8);\nctx.fillStyle = '#f00';\nctx.fillRect(6, 6, 4, 4);\nsp._render(); // push to display canvas\nsp.show('Mosaic');",
-        hint: "sp.ctx(frameIndex?) returns the raw 2d context at pixel resolution. After drawing call sp._render() to update display. Good for mosaic/pixel-art effects.",
-        tags: ["sprite", "mosaic", "pixel", "canvas", "2d"],
+        label: "draw frame with raw ctx",
+        code: "const sp = new Sprite({ width: 16, height: 16, scale: 10 });\n// Draw with raw 2d context\nconst ctx = sp.ctx(); // 16×16 2d context\nctx.fillStyle = '#ff0';\nctx.fillRect(4, 4, 8, 8);\nctx.fillStyle = '#f00';\nctx.fillRect(6, 6, 4, 4);\nsp._render(); // push to display canvas\nsp.show('Sprite');",
+        hint: "sp.ctx(frameIndex?) returns the raw 2d context at pixel resolution — draw anything with canvas 2D API. Call sp._render() after drawing to update the display canvas.",
+        tags: ["sprite", "pixel", "art", "canvas", "2d", "ctx", "raw"],
       },
       {
         label: "onion skin",
@@ -1611,6 +1655,155 @@ audio.start();`,
         code: "const sp = new Sprite({ width: 8, height: 8, scale: 16, bg: '#111' });\nfor (let i = 0; i < 4; i++) {\n  const fi = i === 0 ? 0 : sp.addFrame();\n  sp.frame(fi);\n  sp.fill(i * 2, 0, 2, 8, `hsl(${i*90},80%,60%)`);\n}\nsp.play(8);\nsp.show('Loop');",
         hint: "sp.addFrame() adds a blank frame and returns its index. sp.frame(n) switches drawing target.",
         tags: ["sprite", "frames", "loop", "animation"],
+      },
+      {
+        label: "open sprite editor (GUI)",
+        code: "spriteEditor({ width: 16, height: 16, scale: 20 });",
+        hint: "spriteEditor(opts) — opens the Aseprite-style visual editor: pencil/eraser/fill/eyedropper/line/rect tools, palette, frame timeline with onion skin, play/stop, and export to code/PNG/spritesheet.",
+        tags: ["sprite", "editor", "paint", "pixel", "aseprite", "gui", "visual"],
+      },
+      {
+        label: "edit existing sprite",
+        code: "const sp = new Sprite({ width: 16, height: 16, scale: 20 });\nsp.show('Preview');\nsp.edit(); // opens visual editor on this sprite",
+        hint: "sp.edit() opens the sprite editor linked to an existing Sprite instance. Paint in the editor and sp.canvas updates live. The live JS handle lets you read frames, call sp.play(), etc.",
+        tags: ["sprite", "editor", "edit", "paint", "pixel", "aseprite"],
+      },
+    ],
+  },
+  {
+    name: "Paint Canvas",
+    commands: [
+      {
+        label: "open paint canvas (GUI)",
+        code: "paint({ width: 400, height: 300 });",
+        hint: "paint(opts) — opens the freehand doodle canvas: pen/eraser/line/rect/ellipse/fill/eyedropper tools, adjustable brush size, smooth strokes, animation frames with onion skin, play/stop, undo/redo, autosave to desktop icon, export PNG/sheet/code.",
+        tags: ["paint", "draw", "doodle", "pen", "sketch", "freehand", "gui", "visual", "canvas"],
+      },
+      {
+        label: "paint with multiple frames",
+        code: "paint({ width: 400, height: 300, frames: 4, fps: 8, bg: '#1a1a2e' });",
+        hint: "paint({ width, height, frames, fps, bg }) — open with N frames pre-created. Use the frame strip to add/delete/reorder frames. Play/stop animates them.",
+        tags: ["paint", "draw", "doodle", "animation", "frames", "gui", "visual"],
+      },
+      {
+        label: "paint over an image (backdrop)",
+        code: "paint({ width: 400, height: 300, backdrop: 'https://example.com/photo.jpg' });",
+        hint: "paint({ backdrop }) — opens with an image as a reference layer beneath strokes. Click the 🖼 button in the toolbar to load/clear backdrops. Export PNG composites the backdrop + drawing. Supports image URLs, dataURLs, and video files (live mode keeps the video playing under your strokes).",
+        tags: ["paint", "draw", "backdrop", "image", "reference", "trace", "annotate", "overlay"],
+      },
+      {
+        label: "paint over a video (live backdrop)",
+        code: "paint({ width: 640, height: 360, backdrop: 'video.mp4', backdropMode: 'live' });",
+        hint: "paint({ backdrop, backdropMode:'live' }) — live video underlay: the video keeps playing beneath your drawing. Use 📷 Freeze frame in the 🖼 menu to bake the current frame into a static image for tracing. Export composites the snapshot + drawing.",
+        tags: ["paint", "draw", "video", "backdrop", "live", "trace", "annotate"],
+      },
+    ],
+  },
+  {
+    name: "ASCII Editor",
+    commands: [
+      {
+        label: "open ASCII editor (GUI)",
+        code: "asciiEditor({ cols: 64, rows: 24 });",
+        hint: "asciiEditor(opts) — opens an interactive colored ASCII art editor: type/brush/eraser/fill/eyedropper/line/rect tools, per-cell fg+bg colors, char palette, animation frames with onion skin, undo/redo, autosave to desktop icon. Export: ascii.play() code snippet (colored), plain text, ANSI escape codes.",
+        tags: ["ascii", "text", "art", "glyph", "editor", "gui", "visual", "ansi", "terminal", "character"],
+      },
+      {
+        label: "ASCII editor with frames",
+        code: "asciiEditor({ cols: 80, rows: 40, frames: 4, fps: 8, bg: '#0d0208' });",
+        hint: "asciiEditor({ cols, rows, frames, fps, bg }) — open with N frames pre-created for animation. Use the frame strip to add/delete/reorder frames. Play/stop animates them. Export Code inserts an ascii.play([...]) snippet that replays with full color.",
+        tags: ["ascii", "art", "animation", "frames", "ansi", "terminal", "colored"],
+      },
+      // ── Art-widget event / signal entries ─────────────────────────────────
+      {
+        label: "paint.onStroke — react to each stroke",
+        code: "const p = paint({ width: 400, height: 300 });\np.onStroke(({ tool, color, bbox }) => {\n  console.log('stroke', tool, color, bbox);\n});",
+        hint: "p.onStroke(fn) — fn fires after each brush/eraser/fill stroke. Payload: { tool, color, frame, bbox:{x,y,w,h} }. Returns p for chaining.",
+        tags: ["paint", "event", "stroke", "hook", "react", "trigger", "on"],
+      },
+      {
+        label: "paint.onColor — react to color change",
+        code: "const p = paint({ width: 400, height: 300 });\np.onColor(({ color, prev }) => {\n  console.log('color →', color);\n});",
+        hint: "p.onColor(fn) — fires when the active paint color changes (palette, custom input, eyedropper). Payload: { color, prev }.",
+        tags: ["paint", "event", "color", "hook", "react", "on"],
+      },
+      {
+        label: "paint.signal — decaying-pulse from stroke",
+        code: "const p = paint({ width: 400, height: 300 });\nconst sig = p.signal('stroke', { decay: 300 });\nsetInterval(() => {\n  draw.bg(`hsl(200,80%,${sig.value * 50}%)`);\n}, 16);",
+        hint: "p.signal(event?, { decay, region }) → { value, velocity, stream(fn), on(fn) }. value=1 on stroke, decays to 0 over decay ms. Region { x,y,w,h } in canvas px filters to a spatial area.",
+        tags: ["paint", "signal", "decay", "reactive", "shader", "region"],
+      },
+      {
+        label: "paint.signal with region",
+        code: "const p = paint({ width: 400, height: 300 });\n// React only to strokes in the left half\nconst sig = p.signal('stroke', { decay: 400, region: { x: 0, y: 0, w: 200, h: 300 } });\nsig.stream(s => draw.bg(`hsl(280,80%,${s.value * 40}%)`));",
+        hint: "region:{x,y,w,h} scopes the signal to a canvas region. .stream(fn) pushes value on every animation frame via RAF.",
+        tags: ["paint", "signal", "region", "spatial", "decay", "stream"],
+      },
+      {
+        label: "paint.onFrame — frame changes",
+        code: "const p = paint({ width: 400, height: 300, frames: 4 });\np.onFrame(({ action, index, count }) => {\n  console.log(action, 'frame', index, 'of', count);\n});",
+        hint: "p.onFrame(fn) — fires on add/duplicate/clear/delete/move/select of animation frames. Payload: { action, index, count }.",
+        tags: ["paint", "event", "frame", "animation", "hook"],
+      },
+      {
+        label: "spriteEditor.onPixel — per-pixel hook",
+        code: "const sp = spriteEditor({ width: 16, height: 16, scale: 16 });\nsp.onPixel(({ x, y, color }) => {\n  console.log('pixel at', x, y, color);\n});",
+        hint: "sp.onPixel(fn) — fires for every individual pixel painted (per pointer event, no debounce). Payload: { x, y, color, frame }. Use for precise per-cell triggers.",
+        tags: ["sprite", "editor", "pixel", "event", "hook", "react", "on"],
+      },
+      {
+        label: "spriteEditor.onStroke — per-stroke hook",
+        code: "const sp = spriteEditor({ width: 16, height: 16, scale: 16 });\nsp.onStroke(({ tool, bbox }) => {\n  console.log('stroke', tool, bbox);\n});",
+        hint: "sp.onStroke(fn) — fires at pointerup / fill commit. Payload: { tool, color, frame, bbox:{x,y,w,h} } in sprite px (scale-independent).",
+        tags: ["sprite", "editor", "stroke", "event", "hook", "react", "on"],
+      },
+      {
+        label: "spriteEditor.signal — decaying pixel signal",
+        code: "const sp = spriteEditor({ width: 16, height: 16, scale: 16 });\nconst sig = sp.signal('pixel', { decay: 200 });\nsig.stream(s => draw.circle(200, 200, s.value * 80, '#f38ba8'));",
+        hint: "sp.signal(event?, {decay, region}) → decaying 0–1 signal. event: 'pixel'|'stroke'|'color'|'frame'|'*'. region scopes to sprite-pixel bbox.",
+        tags: ["sprite", "editor", "signal", "decay", "reactive", "pixel", "stream"],
+      },
+      {
+        label: "spriteEditor.signal region (corner)",
+        code: "const sp = spriteEditor({ width: 16, height: 16, scale: 16 });\n// fire only when painting top-left 4×4\nconst sig = sp.signal('pixel', { decay: 300, region: { x: 0, y: 0, w: 4, h: 4 } });\nsetInterval(() => draw.bg(`hsl(120,70%,${sig.value*40}%)`), 16);",
+        hint: "region:{x,y,w,h} filters to sprite-pixel coordinates (NOT screen px). Lets you make different canvas regions control different parameters.",
+        tags: ["sprite", "editor", "signal", "region", "spatial", "decay"],
+      },
+      {
+        label: "asciiEditor.onCell — per-cell hook",
+        code: "const ae = asciiEditor({ cols: 40, rows: 20 });\nae.onCell(({ c, r, ch, fg }) => {\n  console.log(`cell [${c},${r}] = '${ch}' fg:${fg}`);\n});",
+        hint: "ae.onCell(fn) — fires for every cell changed (brush, fill, shape, type). Suppressed during resize. Payload: { c, r, ch, fg, bg, frame }.",
+        tags: ["ascii", "editor", "cell", "event", "hook", "react", "on"],
+      },
+      {
+        label: "asciiEditor.onChar — char change hook",
+        code: "const ae = asciiEditor({ cols: 40, rows: 20 });\nae.onChar(({ char, prev }) => {\n  console.log('char →', char);\n});",
+        hint: "ae.onChar(fn) — fires when the active character changes (palette or custom input or eyedropper). Payload: { char, prev }.",
+        tags: ["ascii", "editor", "char", "event", "hook", "on"],
+      },
+      {
+        label: "asciiEditor.signal — decaying cell signal",
+        code: "const ae = asciiEditor({ cols: 40, rows: 20 });\nconst sig = ae.signal('cell', { decay: 250 });\nsig.stream(s => draw.bg(`hsl(55,90%,${s.value * 30}%)`));",
+        hint: "ae.signal(event?, {decay, region}) → 0–1 decaying signal. event: 'cell'|'stroke'|'color'|'char'|'frame'|'*'. region in cell coords {x,y,w,h}.",
+        tags: ["ascii", "editor", "signal", "decay", "cell", "reactive", "stream"],
+      },
+      {
+        label: "asciiEditor.signal region (cell grid)",
+        code: "const ae = asciiEditor({ cols: 40, rows: 20 });\n// top-left 10×5 cell region\nconst sig = ae.signal('cell', { decay: 300, region: { x: 0, y: 0, w: 10, h: 5 } });\nsetInterval(() => draw.bg(`hsl(200,80%,${sig.value*40}%)`), 16);",
+        hint: "region:{x,y,w,h} filters to cell column/row coordinates (not pixels). Lets you spatially map art regions to audio parameters, shader uniforms, etc.",
+        tags: ["ascii", "editor", "signal", "region", "spatial", "decay", "cell"],
+      },
+      {
+        label: "wm.onStroke — paint overlay hook",
+        code: "const id = wm.spawn('My Image', { type: 'image', html: '<img src=\"photo.jpg\">' });\nwm.onStroke(id, ({ tool, color, bbox }) => {\n  console.log('overlay stroke', tool, color, bbox);\n});",
+        hint: "wm.onStroke(id, fn) — fires when a stroke is drawn on the 🖌️ paint overlay of any window. id from wm.spawn() or wm.getByTitle(). Payload: { tool, color, winId, bbox:{x,y,w,h} }.",
+        tags: ["wm", "overlay", "paint", "stroke", "event", "hook", "window"],
+      },
+      {
+        label: "wm.paintSignal — overlay signal",
+        code: "const id = wm.spawn('Cam', { type: 'camera' });\nconst sig = wm.paintSignal(id, 'stroke', { decay: 300 });\nsetInterval(() => draw.bg(`hsl(280,80%,${sig.value * 40}%)`), 16);",
+        hint: "wm.paintSignal(id, event?, opts?) → { value, velocity, stream, on }. Live 0–1 signal from the paint overlay on a window. Supports region:{x,y,w,h} in overlay canvas px.",
+        tags: ["wm", "overlay", "paint", "signal", "decay", "reactive", "window", "stream"],
       },
     ],
   },
@@ -1800,6 +1993,36 @@ audio.start();`,
   },
 ];
 
+
+function _getObjProps(obj) {
+  const props = new Set();
+  for (let o = obj; o && o !== Object.prototype; o = Object.getPrototypeOf(o))
+    Object.getOwnPropertyNames(o).forEach(k => {
+      if (!k.startsWith('_') && k !== 'constructor') props.add(k);
+    });
+  return [...props];
+}
+
+export function windowMemberCompletionSource(context) {
+  const path = completionPath(context);
+  if (!path || path.path.length === 0) return null;
+
+  let target = window[path.path[0]];
+  for (let i = 1; i < path.path.length; i++) {
+    target = target?.[path.path[i]];
+    if (!target) return null;
+  }
+  if (!target || (typeof target !== 'object' && typeof target !== 'function')) return null;
+
+  const options = _getObjProps(target).map(k => ({ label: k, type: 'property' }));
+  if (!options.length) return null;
+
+  return {
+    from: context.pos - path.name.length,
+    options,
+    validFor: /^[\w$]*/,
+  };
+}
 
 /**
  * Add snippet entries to the toolkit API drawer, creating a new category if needed.

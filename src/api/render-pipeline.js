@@ -10,37 +10,21 @@
 // Shader stages (._isShader = true) self-raf via GLShader/Shader — the pipeline
 // driver only calls read() on canvas stages.
 
+import { resolveDrawable, _isCanvas, _isVideo } from './drawable-source.js';
+import { liveOutput } from '../runtime/keep-alive.js';
+import { onReset } from '../runtime/reset-registry.js';
+
 const _pipelines = [];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// Source resolution + duck-type helpers live in drawable-source.js (ADR 006).
+// _srcWidth/_srcHeight are pipeline-specific sizing helpers, kept local.
 
 function _srcWidth(src) {
   return src.videoWidth ?? src.width ?? 800;
 }
 function _srcHeight(src) {
   return src.videoHeight ?? src.height ?? 600;
-}
-
-// Duck-type helpers — work in both real browsers and jsdom test mocks.
-function _isCanvas(x) {
-  return !!(x && (x instanceof HTMLCanvasElement ||
-    (typeof x.getContext === 'function' && 'width' in x && 'height' in x)));
-}
-function _isVideo(x) {
-  return !!(x && (x instanceof HTMLVideoElement ||
-    (typeof x.readyState === 'number' && 'videoWidth' in x)));
-}
-
-// Resolve any common source type to a canvas or video drawable.
-// Mirrors GLShader._resolveVideoSrc for consistent cross-API behaviour.
-function _resolveSource(input) {
-  if (!input) return null;
-  if (_isCanvas(input._canvas))  return input._canvas;  // Layer / ShaderFX
-  if (_isVideo(input.element))   return input.element;  // CameraStream
-  if (_isVideo(input))           return input;           // bare HTMLVideoElement
-  if (_isCanvas(input))          return input;           // bare HTMLCanvasElement
-  if (_isCanvas(input.canvas))   return input.canvas;   // GLShader / Shader instance
-  return null;
 }
 
 function _makeHiddenDiv() {
@@ -50,19 +34,30 @@ function _makeHiddenDiv() {
   return div;
 }
 
+// ── Source — named lazy sources for pipe() ────────────────────────────────────
+// Sentinel descriptors resolved at pipeline start. Enables pipe(Source.camera)
+// without an explicit await at the call site.
+export const Source = Object.freeze({
+  camera: Object.freeze({ _src: 'camera' }),
+});
+
 // ── InputAdapter ──────────────────────────────────────────────────────────────
-// Head of every pipeline — wraps any supported source.
+// Head of every pipeline — wraps any supported source, including Promises.
 
 class InputAdapter {
   constructor(input) {
-    this._src = _resolveSource(input);
-    if (!this._src) {
+    this._promise  = input instanceof Promise ? input : null;
+    this._src      = this._promise ? null : resolveDrawable(input);
+    this._isShader = false;
+    if (!this._promise && !this._src) {
       throw new Error(
-        'pipe(): unsupported source — pass a CameraStream, HTMLCanvasElement, HTMLVideoElement, ' +
-        'GLShader, Shader, or Layer.'
+        'pipe(): unsupported source — pass Source.camera, a CameraStream, ' +
+        'HTMLCanvasElement, HTMLVideoElement, GLShader, Shader, or Layer.'
       );
     }
-    this._isShader = false;
+  }
+  async _resolve() {
+    if (this._promise) this._src = resolveDrawable(await this._promise);
   }
   _getSource() { return this._src; }
   _start()     {}
@@ -604,6 +599,21 @@ export class Pipeline {
 
   /** Start pipeline without any display sink (access output via .canvas). */
   start() {
+    if (this._rafId || this._starting) return this;
+
+    if (this._head._promise) {
+      this._starting = true;
+      this._head._resolve().then(() => {
+        this._starting = false;
+        if (!this._stopped) this._doStart();
+      });
+      return this;
+    }
+
+    return this._doStart();
+  }
+
+  _doStart() {
     if (this._rafId) return this;
 
     // Initialise all stages in order
@@ -620,8 +630,7 @@ export class Pipeline {
     }
 
     // Register sentinel so the idle watcher treats the pipeline as a live output
-    window.__ar_keepAlive = window.__ar_keepAlive ?? new Set();
-    window.__ar_keepAlive.add(this._sentinel);
+    this._live = liveOutput(this._sentinel);
 
     // Drive canvas stages via raf; shader stages self-raf independently
     const loop = () => {
@@ -646,8 +655,9 @@ export class Pipeline {
   }
 
   stop() {
+    this._stopped = true;
     if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = null; }
-    window.__ar_keepAlive?.delete(this._sentinel);
+    this._live?.release();
     return this;
   }
 
@@ -693,22 +703,16 @@ export class Pipeline {
 /**
  * Create a new render pipeline from any visual source.
  *
- * @param {CameraStream|HTMLVideoElement|HTMLCanvasElement|GLShader|Shader|Layer} source
+ * @param {typeof Source[keyof typeof Source]|CameraStream|HTMLVideoElement|HTMLCanvasElement|GLShader|Shader|Layer|Promise} source
  * @returns {Pipeline}
  *
  * @example
- * const cam = await Camera.open();
- * pipe(cam)
- *   .ascii({ cols: 150, color: '#00ff41', bg: '#0d0208' })
- *   .glshader(`
- *     vec4 a = texture2D(uVideo, uv);
- *     float l = dot(a.rgb, vec3(.299,.587,.114));
- *     vec3 rain = .5+.5*cos(6.28*(uv.y+time*.4+vec3(0,.33,.67)));
- *     gl_FragColor = vec4(rain*l, 1.);
- *   `)
+ * pipe(Source.camera)
+ *   .ascii({ cols: 80, color: '#00ff41', bg: '#0d0208' })
  *   .show('ASCII Cam', { w: 700, h: 500 });
  */
 export function pipe(source) {
+  if (source?._src === 'camera') source = window.Camera?.open();
   return new Pipeline(new InputAdapter(source));
 }
 
@@ -843,3 +847,6 @@ export function cleanupPipelines() {
   for (const p of _pipelines) p._destroy();
   _pipelines.length = 0;
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupPipelines);

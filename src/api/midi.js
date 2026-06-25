@@ -1,3 +1,4 @@
+import { onReset } from '../runtime/reset-registry.js';
 // midi.js — Web MIDI API wrapper (#40)
 // midi.open() → Promise<midi>; midi.inputs(); midi.onNote(fn); midi.onCC(ch,cc,fn);
 // midi.signal(ch,cc) → live signal; midi.spawn() → MIDI monitor window
@@ -118,3 +119,6 @@ export function cleanupMidi() {
   for (const fn of _midi._cleanupFns) fn();
   _midi._cleanupFns.length = 0;
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupMidi);

@@ -1,3 +1,4 @@
+import { onReset } from '../runtime/reset-registry.js';
 // sprite.js — pixel-grid sprite & mosaic animation
 // #22: new Sprite({ width, height, scale, frames })
 
@@ -180,4 +181,18 @@ export class Sprite {
     });
     return this;
   }
+
+  // Open the visual Aseprite-style editor on this sprite
+  edit(opts = {}) {
+    import('./sprite-editor.js').then(({ SpriteEditor }) => new SpriteEditor({ sprite: this, ...opts }));
+    return this;
+  }
+
+  // Static factory — open editor on a new sprite
+  static edit(opts = {}) {
+    import('./sprite-editor.js').then(({ SpriteEditor }) => new SpriteEditor(opts));
+  }
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupSprites);

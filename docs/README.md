@@ -18,6 +18,7 @@ Press **?** in the IDE for the in-app audio quick reference.
 | [control.md](control.md) | Timers, keyboard, color, utilities |
 | [windows.md](windows.md) | Spawn, tile, show/hide, move/resize IDE windows from code |
 | [desktop.md](desktop.md) | Desktop file icon management |
+| [pixel-art.md](pixel-art.md) | Pixel-grid sprites — programmatic API + Aseprite-style visual editor |
 
 ## Z-order
 
@@ -35,7 +36,8 @@ Press **?** in the IDE for the in-app audio quick reference.
 ## Global Functions
 
 ```js
-draw               // Fluent 2D drawing API — draw.rect/circle/text/line/etc (see canvas.md)
+draw               // Fluent 2D drawing API — draw.rect/circle/text/line/backdrop/etc (see canvas.md)
+draw.backdrop(src, opts?)  // image/video/camera underlay below draw calls; src: URL|'camera'|element|Shader
 getCanvas(z?)      // HTMLCanvasElement at logical z (default 0)
 getLayer(z?)       // Layer object with CSS effects API
 pat(str, synth)    // Create audio pattern (mini-notation)
@@ -72,4 +74,7 @@ PIXI                      // PIXI namespace — Sprite, Graphics, Text, TextStyl
 pixi.tick(fn)             // tracked animation callback — cleaned up on Stop
 GLShader                  // WebGL/GLSL shader — works in all browsers (see glsl-shader.md)
 GLSL_PRESETS              // { gradient, plasma, waves, circles, noise } fragment body strings
+Sprite                    // Pixel-grid sprite data model (see pixel-art.md)
+spriteEditor(opts?)       // Open Aseprite-style paint GUI — spriteEditor({ width, height, scale })
+// sp.edit() / Sprite.edit(opts) — open editor on existing or new sprite
 ```

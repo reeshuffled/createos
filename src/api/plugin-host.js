@@ -1,3 +1,4 @@
+import { onReset } from '../runtime/reset-registry.js';
 // plugin-host.js — sandboxed iframe plugins as first-class wm windows
 // #19: PluginHost.load(url) / PluginHost.create(html)
 // Signal bus: plugin.send(type, val), plugin.on(type, fn), plugin.bridge(name, fn)
@@ -261,3 +262,6 @@ export const PluginHost = {
     return new Plugin(html);
   },
 };
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupPlugins);

@@ -1,3 +1,4 @@
+import { onReset } from '../runtime/reset-registry.js';
 // ── Video Signal Bus ──────────────────────────────────────────────────────────
 // Samples pixel data from any canvas/video source and exposes it as live
 // signal objects that can drive audio params, effects, or anything numeric.
@@ -146,3 +147,6 @@ export const VideoSignalAPI = {
     _cleanupFns.push(() => _nativeClearInterval(id));
   },
 };
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupVideoSignal);

@@ -1,3 +1,5 @@
+import { onReset } from '../runtime/reset-registry.js';
+import { liveOutput } from '../runtime/keep-alive.js';
 const _mediaLayers = [];
 
 export function cleanupMedia() {
@@ -124,8 +126,7 @@ class VideoLayer {
   play() {
     this._video.play().catch(() => {});
     if (!this._rafId) {
-      window.__ar_keepAlive = window.__ar_keepAlive ?? new Set();
-      window.__ar_keepAlive.add(this);
+      this._live = liveOutput(this);
       this._renderLoop();
     }
     return this;
@@ -178,7 +179,7 @@ class VideoLayer {
 
   _destroy() {
     this.stop();
-    window.__ar_keepAlive?.delete(this);
+    this._live?.release();
     this._canvas?.remove();
     this._video?.remove();
   }
@@ -280,3 +281,6 @@ export const Media = {
     return new VideoClip(source, start, end);
   },
 };
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupMedia);

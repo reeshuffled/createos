@@ -1,5 +1,7 @@
 import * as Tone from "tone";
 import { AudioViz, SpectrogramCanvas, PianoRollViz, EQWidget, _noteHooks } from "./viz.js";
+import { Drumpad } from "./drumpad.js";
+import { onReset } from '../runtime/reset-registry.js';
 
 const _nativeSetInterval = window.setInterval.bind(window);
 const _nativeClearInterval = window.clearInterval.bind(window);
@@ -954,6 +956,9 @@ class AudioAPI {
   // Floating 3-band EQ panel. Returns a Tone-compatible node for .chain().
   eqWidget(opts = {}) { return new EQWidget(opts); }
 
+  // 8-pad drum machine with step sequencer.
+  drumpad(opts = {}) { return new Drumpad(opts); }
+
   meter() {
     return track(new Tone.Meter());
   }
@@ -1084,3 +1089,6 @@ class AudioAPI {
 }
 
 export const audio = new AudioAPI();
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupAudio);

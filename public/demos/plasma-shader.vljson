@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "toolbar": {
+    "micOn": false,
+    "cameraOn": false
+  },
+  "windows": [
+    {
+      "type": "editor",
+      "editorId": 1,
+      "title": "Plasma Shader",
+      "x": 20,
+      "y": 20,
+      "w": 560,
+      "h": 380,
+      "visible": true,
+      "nochrome": false,
+      "transparent": false,
+      "audio": {
+        "muted": false,
+        "volume": 1
+      },
+      "code": "// Plasma Shader \u2014 animated rainbow color field via GLSL\nnew GLShader(`\n  vec2 uv = fragCoord.xy / uResolution;\n  float t = uTime * 0.5;\n\n  float v = sin(uv.x * 10.0 + t)\n           + sin(uv.y * 10.0 + t * 1.4)\n           + sin((uv.x + uv.y) * 8.0 + t * 1.7)\n           + sin(length(uv - 0.5) * 16.0 - t * 2.0);\n\n  fragColor = vec4(\n    sin(v * 1.5) * 0.5 + 0.5,\n    sin(v * 1.5 + 2.09) * 0.5 + 0.5,\n    sin(v * 1.5 + 4.19) * 0.5 + 0.5,\n    1.0\n  );\n`).start();\n",
+      "mode": "text",
+      "blocksJson": null,
+      "executionState": "running"
+    },
+    {
+      "type": "output",
+      "editorId": 1,
+      "x": 590,
+      "y": 20,
+      "w": 640,
+      "h": 400,
+      "visible": false
+    }
+  ],
+  "desktop": []
+}

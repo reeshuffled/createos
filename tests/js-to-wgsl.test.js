@@ -42,6 +42,37 @@ describe('jsToWGSL — basic output', () => {
   });
 });
 
+// ── bind: param-alias seam (used by viz.shader) ───────────────────────────────
+
+describe('jsToWGSL — bind (param aliases)', () => {
+  test('emits a let for each bound alias, before the user body', () => {
+    const { body } = jsToWGSL((v) => [v, v, v, 1.0], { bind: { v: 'col.r' } });
+    expect(body).toContain('let v = col.r;');
+    expect(body.indexOf('let v = col.r;')).toBeLessThan(body.indexOf('return vec4f('));
+  });
+
+  test('bound alias is typed as a scalar (f32), so int literals coerce around it', () => {
+    const { body } = jsToWGSL((v) => [v * 2, 0, 0, 1], { bind: { v: 'col.r' } });
+    expect(body).toContain('v * 2.0'); // f32 alias forces the int literal to float
+  });
+
+  test('multiple binds emit in order', () => {
+    const { body } = jsToWGSL((v, t) => [v, t, 0.0, 1.0], { bind: { v: 'col.r', t: 'time' } });
+    expect(body).toContain('let v = col.r;');
+    expect(body).toContain('let t = time;');
+  });
+
+  test('a bind expr referencing col sets usesCol even when the fn never names col', () => {
+    const { usesCol } = jsToWGSL((v) => [v, 0.0, 0.0, 1.0], { bind: { v: 'col.r' } });
+    expect(usesCol).toBe(true);
+  });
+
+  test('no bind option leaves the body unchanged (no stray lets)', () => {
+    const { body } = jsToWGSL((v) => [v, 0.0, 0.0, 1.0]);
+    expect(body).not.toContain('let v =');
+  });
+});
+
 // ── Math.* → WGSL builtins ────────────────────────────────────────────────────
 
 describe('jsToWGSL — Math.* mapping', () => {

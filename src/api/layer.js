@@ -161,3 +161,50 @@ export function getLayerForZ(z) {
   reg.set(z, layer);
   return layer;
 }
+
+// Mount a managed <canvas> into the layer stack (the canvasWrapper/fsContainer
+// stack, or an explicit `container`). Owns the non-GPU half of Shader/GLShader
+// init: container resolution, the absolute-fill style, the static→relative fix,
+// and a devicePixelRatio ResizeObserver. The caller attaches its own GPU context
+// and supplies `onResize(w,h)` for any context-specific resize work. See ADR 010.
+//
+// Returns { canvas, parent, sizeRef, refCanvas, resizeObserver } — the caller
+// keeps resizeObserver to disconnect on its own teardown.
+export function mountLayerCanvas({ z = 30, opacity = 1, container = null, webgpu = false, onResize = null } = {}) {
+  const wrapper     = window.__ar_canvasWrapper ?? document.getElementById('canvasWrapper');
+  const fsContainer = window.__ar_fsContainer  ?? document.getElementById('fsContainer');
+  const parent    = container ?? fsContainer ?? wrapper;
+  const sizeRef   = container ?? wrapper ?? parent;
+  const refCanvas = (container ?? wrapper)?.querySelector('canvas');
+
+  const canvas = document.createElement('canvas');
+  if (webgpu) canvas._ar_webgpu = true;   // mirror copy loop skips WebGPU canvases
+  canvas.width  = refCanvas?.width  ?? 1600;
+  canvas.height = refCanvas?.height ?? 900;
+  Object.assign(canvas.style, {
+    position: 'absolute',
+    top: '0', left: '0',
+    width: '100%', height: '100%',
+    zIndex: String(z),
+    opacity: String(opacity),
+    pointerEvents: 'none',
+  });
+  if (container) {
+    const pos = getComputedStyle(container).position;
+    if (pos === 'static') container.style.position = 'relative';
+  }
+  parent?.appendChild(canvas);
+
+  const resizeObserver = new ResizeObserver(() => {
+    const w = Math.round((sizeRef?.clientWidth  ?? 0) * devicePixelRatio) || 1600;
+    const h = Math.round((sizeRef?.clientHeight ?? 0) * devicePixelRatio) || 900;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width  = w;
+      canvas.height = h;
+      onResize?.(w, h);
+    }
+  });
+  resizeObserver.observe(sizeRef ?? parent);
+
+  return { canvas, parent, sizeRef, refCanvas, resizeObserver };
+}

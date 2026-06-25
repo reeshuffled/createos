@@ -4,6 +4,7 @@ import {
   GestureRecognizer,
   FaceLandmarker,
 } from "@mediapipe/tasks-vision";
+import { onReset } from '../runtime/reset-registry.js';
 
 const WASM_CDN = "https://unpkg.com/@mediapipe/tasks-vision@0.10.35/wasm";
 const MODEL_BASE = "https://storage.googleapis.com/mediapipe-models";
@@ -261,3 +262,6 @@ export const vision = {
     return this;
   },
 };
+
+// Register teardown with the reset registry (ADR 008).
+onReset(stopVision);

@@ -30,6 +30,11 @@ draw.resetTransform()
 draw.alpha(0–1) / draw.blend(mode)         // modes: 'screen' 'multiply' 'lighter' etc.
 draw.pixelate(source, blockSize, x?, y?, w?, h?)   // blocky pixelation of any canvas/video
 draw.toASCII(canvas, {cols, rows, charset, bg, color}) → { el: <pre>, update(canvas) }
+draw.backdrop(source, {z?, fit?, loop?})    // render image/video/camera below draw calls
+  // source: URL string | 'camera' | HTMLImageElement | HTMLVideoElement | CameraStream |
+  //         HTMLCanvasElement | GLShader | Shader | Layer
+  // fit: 'cover' (default) | 'contain' | 'stretch'
+  // Returns { stop(), layer } — stop() cancels live video loop; auto-cleaned on reset.
 draw.at(z)                                 // switch to layer z (returns same API)
 draw.width  // 1600
 draw.height // 900
@@ -300,6 +305,25 @@ audio.fft.stream(fn)                              // RAF push
 const sg   = audio.spectrogram(source, { palette, width, height })  // → { canvas }
 const roll = audio.pianoRoll({ z, opacity, speed, midiMin, midiMax })
 const eq   = audio.eqWidget({ x, y })  // eq.low/mid/high(dB); synth.chain(eq)
+const dp   = audio.drumpad({ title, x, y, w, h })  // 8-pad drum machine + 16-step sequencer
+  // dp.bpm(128)                         // set tempo
+  // dp.pattern(voiceIdx, 'x . x .')     // fill a voice row from mini-notation
+  // dp.step(voiceIdx, stepIdx, bool)    // toggle individual step
+  // Keyboard shortcuts: q w e r (top row) / a s d f (bottom row)
+  // Toolbar: 🥁 New Drum Pad button; also audio.drumpad() or new Drumpad(opts)
+
+  // ── Event / signal API (per-instance; hooks cleared on reset, windows survive) ──
+  dp.onHit(fn)            // fn({vi,id,label,source,step}) — any pad
+  dp.onPad('kick', fn)    // fn({vi,id,label,source,step}) — scoped to one pad (index 0-7 or name)
+  dp.onStep(fn)           // fn({step,activeVoices:[vi…]}) — once per sequencer step while playing
+  // source: 'pad' | 'key' | 'seq'
+
+  const sig = dp.signal('kick', { decay: 250 })  // decaying-pulse signal scoped to a pad
+  const sig = dp.signal()                          // whole-kit signal (any pad)
+  sig.value                // 0–1; 1.0 on hit, decays to 0 over decay ms (lazy, no timer)
+  sig.velocity             // alias for sig.value
+  sig.stream(fn)           // push value to fn on every animation frame
+  sig.onHit(fn)            // register a hit callback on this signal's pad scope
 ```
 
 ### Microphone
@@ -606,13 +630,24 @@ wm.spawn(title, opts)   // → id
 // opts.transparent: true → semi-transparent background
 // opts.z: number → initial CSS z-index
 // opts.onClose: fn → called when window is closed (e.g. stopRunning)
-// Video windows: ⟳ sync button; ♪ button folds out spectrum/waveform panel (source+style selectors)
-// Image/video/html/sensor windows: ↔/↕ flip buttons apply scale() transform to body
+// Video/camera windows: ♪ button folds out spectrum/waveform panel (source+style selectors)
+//   Camera windows: source selector locked while panel is docked; pop-out button opens standalone viz
+// Viz windows (type:'viz'): opts.source='master'|'mic'|'vid:<id>'|'ch:<id>', opts.style='wave'|'bars'|'ring'
+//   Control bar has two color pickers: background color + waveform/ring color — persisted across reloads
+// Image/video/html/sensor windows: ↔/↕ flip buttons flip only the visualization (not chrome)
 // Sensor windows: opts.source = 'motion'|'gamepad'|'geo'|'battery' — live gauge/bar displays
+//   Toolbar: gauge icon opens dropdown to spawn any sensor type
 wm.spawn('Motion', { type: 'sensor', source: 'motion', w: 480, h: 200 })
 wm.spawn('Gamepad', { type: 'sensor', source: 'gamepad', w: 380, h: 200 })
 
 wm.pickFile(key, pickerOpts?)   // async → blob URL (cached by key, re-prompts once)
+
+wm.undo()         // undo last window layout change (position/size/visibility only — NOT widget content)
+wm.redo()         // redo last undone window layout change
+wm.pushHistory()  // manually snapshot current layout onto the undo stack
+
+wm.addHistoryControls(winId, history)  // inject ↶/↷ titlebar buttons wired to a WidgetHistory instance
+                                       // also sets win._widgetHistory for Cmd/Ctrl+Z keyboard routing
 ```
 
 Built-in ids: `win-editor` `win-canvas` `win-console` `win-toolkit` `win-camera` `win-mic`
@@ -624,6 +659,10 @@ App toolbar ⇒ **⇒ share** button serializes the full desktop (all editors + 
 https://your-host/?embed=1&project=<base64>
 ```
 Loading this URL runs the art fullscreen — editor chrome hidden, canvas fills viewport, user-spawned windows at saved positions. Single-editor variant: `?embed=1&code=<base64>`.
+
+### Demo Gallery
+
+Toolbar ⇒ **🎬 gallery** button opens a modal listing curated built-in demos. Each "Load Demo" button fetches the project from `public/demos/` and runs `applyProject()` — restores editor code, window layout, and starts execution. Add new demos by placing `.vljson` files in `public/demos/` and listing them in `public/demos/index.json`.
 
 ---
 
@@ -644,6 +683,235 @@ desktop.onFile(({id, name, type, url}) => {})   // fires on double-click
 desktop.open(id)
 // Drag icon over trash zone (shows at bottom center during drag) → releases/deletes icon
 // Green badge appears on icon when its spawned window is open
+```
+
+---
+
+## Art-widget events — `WidgetEvents` (shared helper)
+
+All interactive art widgets (Drumpad, Paint, SpriteEditor, AsciiEditor) share a common **WidgetEvents** plumbing class (`src/api/widget-events.js`). It is used internally — you never construct it directly — but the contract it provides appears on every widget's public API:
+
+```js
+// Hook registration (returns widget instance for chaining)
+widget.on('stroke', fn)   // low-level (prefer the typed aliases below)
+widget.emit('stroke', {}) // internal; widgets call this at each choke-point
+
+// Typed aliases (all return widget for chaining)
+widget.onStroke(fn)    // fired at pointerup / fill commit
+widget.onColor(fn)     // fired when active color / char changes
+widget.onTool(fn)      // fired when tool selection changes
+widget.onFrame(fn)     // fired on frame add/dup/clear/delete/move/select
+// widget-specific: onPixel (SpriteEditor), onCell / onChar (AsciiEditor), onHit/onPad/onStep (Drumpad)
+
+// Decaying-pulse signal
+const sig = widget.signal(event?, { decay: 250, region: null, match: null })
+//   event: 'stroke' | 'color' | 'tool' | 'frame' | '*' | widget-specific events
+//   decay (ms): how long until value reaches 0 after the last triggering event
+//   region {x,y,w,h}: spatial filter in widget-native coords (px for paint/sprite, cells for ascii)
+//   match fn: arbitrary predicate filter on payload
+sig.value      // 0–1 (lazy, no timer)
+sig.velocity   // alias for value
+sig.stream(fn) // push to fn each animation frame (RAF)
+sig.on(fn)     // register a filtered callback on this signal's scope
+
+// Lifecycle
+//   All hooks auto-clear when the widget is destroyed (e.g. reset / window close)
+//   cleanupPaints / cleanupSpriteEditors / cleanupAsciiEditors / cleanupDrumpads clear them too
+```
+
+---
+
+## Pixel Art — `Sprite`, `spriteEditor`
+
+```js
+// Programmatic sprite
+const sp = new Sprite({ width: 16, height: 16, scale: 20, frames: 1 });
+sp.pixel(x, y, '#ff0000')       // set one pixel
+sp.fill(x, y, w, h, color)      // fill rect
+sp.clear()                       // transparent
+sp.frame(i)                      // switch active frame (0-indexed)
+sp.addFrame()                    // append blank frame
+sp.onionSkin(0.3)                // ghost prev frame at opacity; 0 = off
+sp.play(fps)                     // start animation loop
+sp.stop()
+sp.show('My Sprite')             // open wm window + return handle
+
+// Paint GUI — Aseprite-style editor window
+spriteEditor({ width: 16, height: 16, scale: 20 })   // new blank sprite + editor
+// or via Sprite instance:
+sp.edit()                        // open editor on existing sprite
+Sprite.edit({ width: 32, height: 32 })               // static: new sprite + editor
+
+// Editor has: pencil · eraser · fill bucket · eyedropper · line · rect · rect-fill
+// Palette: 12 swatches + custom color picker + transparent
+// Frame strip: add (＋) · duplicate (⧉) · delete (🗑) · reorder (◀▶) · onion skin (🧅)
+// Transport: ▶ play · ■ stop · fps input
+// Export: ⤓ Code → inserts new Sprite(…) + draw calls into active editor
+//         ⤓ PNG  → downloads current frame
+//         ⤓ Sheet → downloads all frames as horizontal spritesheet
+
+// Toolbar: paintbrush＋ icon opens a blank 16×16 editor
+// Cleanup: spriteEditor windows cleaned on reset; underlying Sprite cleaned by cleanupSprites()
+
+// ── Event / signal API ──────────────────────────────────────────────────────
+// All on* methods return the editor instance for chaining.
+sp.onPixel(fn)       // fn({ x, y, color, frame }) per pixel painted (pencil/eraser per pointer)
+sp.onStroke(fn)      // fn({ tool, color, frame, bbox:{x,y,w,h} }) at end of stroke or fill
+sp.onColor(fn)       // fn({ color, prev }) when active color changes
+sp.onTool(fn)        // fn({ tool, prev }) when active tool changes
+sp.onFrame(fn)       // fn({ action, index, count }) on frame add/dup/delete/move/select
+
+// Decaying-pulse signal
+sp.signal('pixel', { decay: 200 })                              // any pixel
+sp.signal('pixel', { decay: 200, region: { x:0,y:0,w:8,h:8 } }) // top-left quadrant
+//   → { value, velocity, stream(fn), on(fn) }
+//   event: 'pixel' | 'stroke' | 'color' | 'tool' | 'frame' | '*'
+//   region:{x,y,w,h} filters by sprite-pixel coordinates (scale-independent)
+```
+
+---
+
+## Paint Canvas — `paint`, `Paint`
+
+Freehand doodle canvas with animation frames, brush tools, autosave, and undo/redo. Supports a **backdrop** reference layer (image or live video) beneath all strokes.
+
+```js
+// Open a Paint window
+paint({ width: 400, height: 300 })                // blank 400×300 canvas
+paint({ width: 800, height: 600, frames: 4, fps: 8, bg: '#1a1a2e' })
+
+// Open with a backdrop (image/video as a reference layer beneath strokes)
+paint({ width: 640, height: 360, backdrop: 'https://example.com/photo.jpg' })
+paint({ width: 640, height: 360, backdrop: 'clip.mp4', backdropMode: 'live' })
+//   backdrop:     URL string | dataURL | HTMLImageElement | HTMLVideoElement | null
+//   backdropMode: 'image' (static/frozen, default) | 'live' (video keeps playing)
+
+// Paint class (also works directly):
+new Paint({ width, height, frames, fps, bg, title, x, y, backdrop, backdropMode })
+
+// Backdrop API (also accessible via 🖼 toolbar button):
+p.setBackdrop(source, { mode })   // set backdrop: URL/element + 'image'|'live'
+p.clearBackdrop()                 // remove backdrop, restore bg/checker
+
+// Frame API (mirrors Sprite):
+p.frame(n)          // switch active frame
+p.addFrame()        // append blank frame, returns new index
+p.frameCount        // number of frames
+p.play(fps)         // start animation loop
+p.stop()
+
+// Tools: pen · eraser · line · rect · ellipse · fill bucket · eyedropper
+// Brush size slider (1–64px), smooth freehand strokes (quadratic midpoint)
+// Palette: 12 swatches + custom color picker; bg color picker
+// Backdrop toolbar (🖼): load image · load video (live) · 📷 Freeze frame · clear
+// Frame strip: add (＋) · duplicate (⧉) · clear · delete (🗑) · reorder (◀▶) · onion skin
+// Transport: ▶ play · ■ stop · fps input
+// Export: ⤓ Code → inserts draw.backdrop()+draw.image() into active editor (if backdrop active)
+//         ⤓ PNG  → downloads current frame composited over backdrop
+//         ⤓ Sheet → all frames composited over backdrop as horizontal spritesheet
+// Undo/redo: Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z (also titlebar buttons)
+// Autosave: creates a .paint desktop icon; double-click to reopen (backdrop persisted)
+
+// Toolbar: 🖌️ icon opens a blank 400×300 canvas
+// Cleanup: paint windows cleaned on reset via cleanupPaints()
+
+// ── Event / signal API ──────────────────────────────────────────────────────
+// All on* methods return the paint instance for chaining.
+p.onStroke(fn)       // fn({ tool, color, frame, bbox:{x,y,w,h} }) after each stroke or fill
+p.onColor(fn)        // fn({ color, prev }) when active color changes
+p.onTool(fn)         // fn({ tool, prev }) when active tool changes
+p.onFrame(fn)        // fn({ action, index, count }) on frame add/dup/clear/delete/move/select
+
+// Decaying-pulse signal — value=1 on event, decays to 0 over `decay` ms
+p.signal('stroke', { decay: 250 })                             // any stroke
+p.signal('stroke', { decay: 250, region: { x:0,y:0,w:200,h:300 } }) // left-half only
+//   → { value, velocity, stream(fn), on(fn) }
+//   event: 'stroke' | 'color' | 'tool' | 'frame' | '*'
+//   region:{x,y,w,h} filters by bbox overlap in canvas pixels
+```
+
+### In-window paint overlay (video/camera/image windows)
+
+All image, video, camera, canvas, and shader windows have a **🖌️ paint overlay** toggle in the titlebar. No code required.
+
+- Click 🖌️ → drawing canvas activates over the visual; mini-toolbar appears (pen/eraser, color, brush size, clear, snapshot)
+- **📷 Snapshot** → composites the current visual frame + overlay into a PNG desktop icon
+- Click 🖌️ again → overlay and toolbar removed, original window interactions restored
+- Strokes persist within the window session but are not saved to the project
+
+```js
+// Overlay event / signal API — hooks register eagerly even before the overlay is activated
+const id = wm.spawn('My Video', { type: 'video', src: 'clip.mp4' });
+wm.paintEvents(id)                          // → WidgetEvents (or null if no overlay)
+wm.onStroke(id, ({ tool, color, bbox }) => { /* ... */ })   // fn({tool,color,winId,bbox})
+wm.paintSignal(id, 'stroke', { decay: 300 })               // → decaying signal
+wm.paintSignal(id, 'stroke', { decay:300, region:{x,y,w,h} }) // region in overlay px
+// Hooks cleared on reset; wm.getByTitle(title) → id for title-based lookup
+```
+
+---
+
+## ASCII Art Editor — `asciiEditor`, `AsciiEditor`
+
+Interactive colored ASCII art editor (asciistudio.app-style): per-cell fg + bg color, keyboard typing, brush tools, animation frames, autosave, and undo/redo.
+
+```js
+// Open an ASCII editor window
+asciiEditor({ cols: 64, rows: 24 })
+asciiEditor({ cols: 80, rows: 40, frames: 4, fps: 8, bg: '#0d0208' })
+
+// AsciiEditor class (also works directly):
+new AsciiEditor({ cols, rows, cellW, cellH, frames, fps, bg, title, x, y })
+
+// Frame API:
+ed.frame(n)          // switch active frame
+ed.addFrame()        // append blank frame, returns new index
+ed.frameCount        // number of frames
+ed.play(fps)         // start animation loop
+ed.stop()
+
+// Cell data model: each cell = { ch, fg, bg }
+//   ch = character (string), fg = '#rrggbb', bg = '#rrggbb' | null (transparent)
+
+// Tools: type · brush · eraser · fill (flood by cell identity) · eyedropper · line · rect
+// Char palette: ░ ▒ ▓ █ ▀ ▄ ■ · and more, plus free custom-char input
+// Colors: per-cell fg <input type=color> + bg <input type=color> + transparent-bg toggle
+// Grid size presets: 64×24, 80×40, 32×16, 40×20, 120×48
+// Keyboard typing (type tool): click to set caret, type printable chars, arrows/Enter/Backspace
+// Frame strip: add (＋) · duplicate (⧉) · clear · delete (🗑) · reorder (◀▶) · onion skin
+// Transport: ▶ play · ■ stop · fps input
+// Export:
+//   Code  → inserts ascii.play([{w,h,cells:[{c,f,b}...]},...], fps) into active editor (colored)
+//   Text  → downloads plain character grid as .txt + clipboard
+//   ANSI  → downloads ANSI-escape-coded text (.txt) for terminals
+// Undo/redo: Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z (also titlebar buttons)
+// Autosave: creates a .ascii desktop icon; double-click to reopen
+
+// Toolbar: terminal＋ icon opens a blank 64×24 editor
+// Cleanup: ascii editor windows cleaned on reset via cleanupAsciiEditors()
+
+// ── Event / signal API ──────────────────────────────────────────────────────
+// All on* methods return the editor instance for chaining.
+ed.onCell(fn)        // fn({ c, r, ch, fg, bg, frame }) on every cell change (suppressed during resize)
+ed.onStroke(fn)      // fn({ tool, fg, bg, char, frame, bbox:{x,y,w,h} }) at end of stroke/fill (bbox in cell coords)
+ed.onColor(fn)       // fn({ fg, bg, prev? }) when fg or bg color changes
+ed.onChar(fn)        // fn({ char, prev }) when active character changes
+ed.onTool(fn)        // fn({ tool, prev }) when active tool changes
+ed.onFrame(fn)       // fn({ action, index, count }) on frame add/dup/clear/delete/move/select
+
+// Decaying-pulse signal
+ed.signal('cell', { decay: 250 })                              // any cell change
+ed.signal('cell', { decay: 250, region: { x:0,y:0,w:10,h:5 } }) // top-left 10×5 cell region
+//   → { value, velocity, stream(fn), on(fn) }
+//   event: 'cell' | 'stroke' | 'color' | 'char' | 'tool' | 'frame' | '*'
+//   region:{x,y,w,h} filters by cell column/row (not screen pixels)
+
+// Playing colored frames (exported by AsciiEditor):
+ascii.play([
+  { w: 64, h: 24, cells: [{ c: '@', f: '#00ff41', b: null }, ...] }
+], 8);
+// String frames still work unchanged (backward-compatible):
+ascii.play(['frame 1\nline 2', 'frame 2'], 12);
 ```
 
 ---

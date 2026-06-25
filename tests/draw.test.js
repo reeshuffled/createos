@@ -1,4 +1,4 @@
-import { getDraw, cleanupDraw } from '../src/api/draw.js';
+import { getDraw, cleanupDraw, cleanupBackdrops } from '../src/api/draw.js';
 
 // ── Canvas mock ───────────────────────────────────────────────────────────────
 
@@ -361,5 +361,77 @@ describe('cleanupDraw', () => {
     const b = getDraw(600);
     expect(a).not.toBe(b);
     delete window.__ar_getLayerCanvas;
+  });
+});
+
+// ── backdrop ──────────────────────────────────────────────────────────────────
+
+describe('DrawTarget.backdrop', () => {
+  afterEach(() => {
+    cleanupBackdrops();
+    delete window.__ar_keepAlive;
+    delete window.__ar_getLayerCanvas;
+  });
+
+  test('returns handle with stop() and layer', () => {
+    const bdCanvas = makeCanvas(200, 100).canvas;
+    const getLayerCanvas = () => bdCanvas;
+    const draw = getDraw(2000, getLayerCanvas);
+
+    const img = new Image();
+    Object.defineProperty(img, 'complete',     { get: () => true  });
+    Object.defineProperty(img, 'naturalWidth', { get: () => 200   });
+
+    const handle = draw.backdrop(img);
+    expect(handle).toHaveProperty('stop');
+    expect(handle).toHaveProperty('layer');
+    expect(handle.layer).toBe(1999);  // this.#z - 1 = 2000 - 1
+  });
+
+  test('cleanupBackdrops stops all backdrops', () => {
+    window.__ar_keepAlive = new Set();
+    const { canvas } = makeCanvas(200, 100);
+    const bdCanvas   = makeCanvas(200, 100).canvas;
+    const getLayerCanvas = (z) => z === 0 ? canvas : bdCanvas;
+    const draw = getDraw(2001, getLayerCanvas);
+
+    // Live source (canvas) — starts a raf loop
+    window.__ar_keepAlive.add = vi.fn(window.__ar_keepAlive.add.bind(window.__ar_keepAlive));
+    window.__ar_keepAlive.delete = vi.fn(window.__ar_keepAlive.delete.bind(window.__ar_keepAlive));
+
+    draw.backdrop(bdCanvas, { loop: true });
+    expect(window.__ar_keepAlive.add).toHaveBeenCalled();
+
+    cleanupBackdrops();
+    expect(window.__ar_keepAlive.delete).toHaveBeenCalled();
+  });
+
+  test('cleanupBackdrops is idempotent', () => {
+    expect(() => { cleanupBackdrops(); cleanupBackdrops(); }).not.toThrow();
+  });
+
+  test('stop() removes sentinel from __ar_keepAlive', () => {
+    window.__ar_keepAlive = new Set();
+    const { canvas } = makeCanvas(200, 100);
+    const bdCanvas   = makeCanvas(200, 100).canvas;
+    const getLayerCanvas = (z) => z === 0 ? canvas : bdCanvas;
+    const draw = getDraw(2002, getLayerCanvas);
+
+    const handle = draw.backdrop(bdCanvas, { loop: true });
+    const sizeBefore = window.__ar_keepAlive.size;
+    handle.stop();
+    expect(window.__ar_keepAlive.size).toBeLessThan(sizeBefore);
+  });
+
+  test('URL string source creates an Image (no raf)', () => {
+    const { canvas } = makeCanvas(200, 100);
+    const bdCanvas   = makeCanvas(200, 100).canvas;
+    const getLayerCanvas = (z) => z === 0 ? canvas : bdCanvas;
+    const draw = getDraw(2003, getLayerCanvas);
+
+    const handle = draw.backdrop('https://example.com/photo.jpg');
+    expect(handle).toHaveProperty('stop');
+    // stop should not throw
+    expect(() => handle.stop()).not.toThrow();
   });
 });

@@ -1,3 +1,4 @@
+import { onReset } from '../runtime/reset-registry.js';
 // ── Multi-camera API ─────────────────────────────────────────────────────────
 
 const _openCameras = [];
@@ -160,3 +161,6 @@ export function initCamera() {
     }).catch(() => {});
   }
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupCameras);

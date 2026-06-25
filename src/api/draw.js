@@ -1,4 +1,32 @@
-const _targets = new Map();
+import { resolveDrawable } from './drawable-source.js';
+import { onReset } from '../runtime/reset-registry.js';
+import { liveOutput } from '../runtime/keep-alive.js';
+
+const _targets   = new Map();
+const _backdrops = [];
+
+// ── Fit helper (cover / contain / stretch) ────────────────────────────────────
+function _drawFit(canvas, src, fit) {
+  const ctx = canvas.getContext('2d');
+  const cw = canvas.width, ch = canvas.height;
+  const sw = src.videoWidth ?? src.naturalWidth  ?? src.width  ?? cw;
+  const sh = src.videoHeight ?? src.naturalHeight ?? src.height ?? ch;
+  if (!sw || !sh) return;
+  if (fit === 'stretch') {
+    ctx.drawImage(src, 0, 0, cw, ch);
+  } else {
+    const scale = fit === 'cover'
+      ? Math.max(cw / sw, ch / sh)
+      : Math.min(cw / sw, ch / sh);
+    const dw = sw * scale, dh = sh * scale;
+    ctx.drawImage(src, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+  }
+}
+
+export function cleanupBackdrops() {
+  _backdrops.forEach(h => h.stop?.());
+  _backdrops.length = 0;
+}
 
 class DrawTarget {
   #z;
@@ -269,6 +297,85 @@ class DrawTarget {
     return { el: pre, update };
   }
 
+  // ── Backdrop ──────────────────────────────────────────────────────────────
+  //
+  // Renders `source` onto a layer below this one so all draw calls appear on
+  // top.  `source` accepts anything resolveDrawable handles (ADR 006) PLUS:
+  //   - 'camera'      → document.getElementById('camera') (<video>)
+  //   - A URL string  → loaded as a static <img> (drawn once on load)
+  //
+  // The string/URL cases are this method's own async layer on top of the shared
+  // sync resolver — see ADR 006 for why they are not folded into resolveDrawable.
+  //
+  // Returns { stop(), layer }.  Live sources raf-loop; stop() cancels it.
+  // cleanupBackdrops() is called automatically on reset.
+
+  backdrop(source, { z, fit = 'cover', loop = true } = {}) {
+    const targetZ  = z ?? (this.#z - 1);
+    const bdCanvas = this.#gc(targetZ);
+
+    // Build the stop handle up-front so the raf closure can reference it
+    let _rafId = null;
+    let _live  = null;
+    const h = {
+      layer: targetZ,
+      stop: () => {
+        if (_rafId !== null) { cancelAnimationFrame(_rafId); _rafId = null; }
+        _live?.release(); _live = null;
+        const i = _backdrops.indexOf(h);
+        if (i !== -1) _backdrops.splice(i, 1);
+      },
+    };
+    _backdrops.push(h);
+
+    // Resolve to a drawable
+    let drawable = null;
+    if (typeof source === 'string') {
+      if (source === 'camera') {
+        drawable = document.getElementById('camera');
+      } else {
+        // URL string → static image
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => _drawFit(bdCanvas, img, fit);
+        img.src = source;
+        return h;
+      }
+    } else {
+      drawable = resolveDrawable(source);
+    }
+
+    if (!drawable) {
+      console.warn('draw.backdrop: unsupported source type');
+      return h;
+    }
+
+    // Static <img>
+    if (drawable instanceof HTMLImageElement || drawable.nodeName === 'IMG') {
+      const draw = () => _drawFit(bdCanvas, drawable, fit);
+      if (drawable.complete && drawable.naturalWidth) draw();
+      else drawable.addEventListener('load', draw, { once: true });
+      return h;
+    }
+
+    // Non-looping one-shot
+    if (!loop) {
+      _drawFit(bdCanvas, drawable, fit);
+      return h;
+    }
+
+    // Live source — raf loop
+    _live = liveOutput({});
+    const tick = () => {
+      const ctx = bdCanvas.getContext('2d');
+      ctx.clearRect(0, 0, bdCanvas.width, bdCanvas.height);
+      if ((drawable.videoWidth ?? drawable.width) > 0) _drawFit(bdCanvas, drawable, fit);
+      _rafId = requestAnimationFrame(tick);
+    };
+    _rafId = requestAnimationFrame(tick);
+    return h;
+  }
+
   // ── Layer targeting ───────────────────────────────────────────────────────
 
   at(z) { return new DrawTarget(z, this.#gc); }
@@ -298,3 +405,6 @@ export function cleanupDraw() {
   }
   _targets.clear();
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupBackdrops);

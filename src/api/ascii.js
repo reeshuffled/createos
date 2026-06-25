@@ -1,3 +1,4 @@
+import { onReset } from '../runtime/reset-registry.js';
 // ascii.js — ASCII animation playback and frame capture
 // #21: ascii.play(frames, fps) / ascii.record(source, opts)
 
@@ -39,7 +40,38 @@ class AsciiPlayer {
     _players.push(this);
   }
 
-  _render() { this.el.textContent = this.frames[this._fi] ?? ''; }
+  _render() {
+    const frame = this.frames[this._fi];
+    if (!frame) return;
+    if (typeof frame === 'string') {
+      this.el.textContent = frame;
+    } else {
+      this._renderColored(frame);
+    }
+  }
+
+  _renderColored({ w, h, cells }) {
+    let html = '';
+    for (let r = 0; r < h; r++) {
+      let run = '', runF = null, runB = null;
+      const flush = () => {
+        if (!run) return;
+        const esc = run.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const st  = `color:${runF ?? '#00ff41'};${runB ? `background:${runB};` : ''}`;
+        html += `<span style="${st}">${esc}</span>`;
+        run = ''; runF = null; runB = null;
+      };
+      for (let c = 0; c < w; c++) {
+        const cell = cells[r * w + c];
+        const f = cell?.f ?? null, b = cell?.b ?? null;
+        if (f !== runF || b !== runB) { flush(); runF = f; runB = b; }
+        run += cell?.c ?? ' ';
+      }
+      flush();
+      html += '\n';
+    }
+    this.el.innerHTML = html;
+  }
 
   start() {
     if (this._iid != null) return this;
@@ -128,3 +160,6 @@ export const ascii = {
     });
   },
 };
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupAscii);

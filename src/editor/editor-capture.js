@@ -1,3 +1,4 @@
+import { onReset } from '../runtime/reset-registry.js';
 // DOMCapture — renders any DOM element to a live HTMLCanvasElement via SVG foreignObject.
 // The canvas can be passed directly as `video:` to the Shader class.
 
@@ -113,3 +114,6 @@ export function cleanupCaptures() {
   for (const c of _captures.values()) c.stop();
   _captures.clear();
 }
+
+// Register teardown with the reset registry (ADR 008).
+onReset(cleanupCaptures);
