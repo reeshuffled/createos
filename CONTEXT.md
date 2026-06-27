@@ -53,5 +53,11 @@ A live line-highlight overlay in the code editor showing which statements are cu
 ### AST Transform Pipeline
 The code-transformation stage applied to user code before injection. One Esprima parse; multiple registered visitors applied in order. `live-patch.js` hosts the pipeline (`transformCode(code, visitors)`). Current visitors: loop-protection (always), trace injection (when Execution Trail is enabled). Visitors see original source positions so line numbers are always accurate.
 
+### Text Object
+A styled, positioned text element managed by a **Text Layer**. Has content, position, font family/size/color/weight/style, alignment, rotation (degrees), kerning (letter-spacing px), and optional arc curve (`{type:'arc', radius}`). Interactive objects (placed via the text tool) are persistent; programmatic objects (placed via `wm.addText()`) are run-scoped and cleared on reset. Selected via single click, edited via double-click, moved by dragging, deleted via Delete key. See ADR 024.
+
+### Text Layer
+The subsystem (`src/api/text-layer.js`) shared by the WM paint overlay and the standalone `Paint` widget. Owns the array of **Text Objects**, their interaction DOM nodes, and a **mirror canvas** that re-renders all objects on every change. The mirror canvas is composited in snapshot and recording output alongside the raster overlay — after base canvases and the paint overlay, so text always appears on top. See ADR 024.
+
 ### Event Stream Panel
 A floating WM window that shows a live rate-limited feed of bus events during a run. One row per unique event name; repeat fires within 200 ms increment a counter badge (`×N`) rather than spawning new rows. Rows are expandable to show full payload (depth-2 JSON tree). Default filter excludes harness-internal prefixes (`editor:`, `session:`, `wm:`). Implemented via a bus tap (`addBusTap`) — not a run-scoped subscription. See ADR 019.

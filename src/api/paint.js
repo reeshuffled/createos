@@ -7,6 +7,7 @@ import { insertSnippet } from '../editor/active-editor.js';
 import { FrameDoc } from './frame-doc.js';
 import { mountWidgetShell, buildFrameStrip, buildTransport } from './widget-shell.js';
 import { onReset } from '../runtime/reset-registry.js';
+import { TextLayer } from './text-layer.js';
 
 const _paints = [];
 
@@ -31,6 +32,7 @@ const TOOLS = [
   { id: 'ellipse', icon: '<i class="fa-regular fa-circle"></i>',      title: 'Ellipse (outline)' },
   { id: 'fill',    icon: '<i class="fa-solid fa-fill-drip"></i>',     title: 'Fill bucket (flood fill)' },
   { id: 'eye',     icon: '<i class="fa-solid fa-eye-dropper"></i>',   title: 'Eyedropper (pick color)' },
+  { id: 'text',    icon: '<i class="fa-solid fa-font"></i>',          title: 'Text (T)' },
 ];
 
 // ── Canvas-size presets ─────────────────────────────────────────────────────────
@@ -77,6 +79,8 @@ export class Paint {
     this._lastXY  = null;   // previous pointer pos for smooth curves
     this._prevXY  = null;   // two-back pointer pos for smooth curves
     this._strokeBbox = null; // { minX, minY, maxX, maxY } accumulated during stroke
+    this._textLayer = null;  // TextLayer — created in _buildCanvasArea
+    this._hitCanvas = null;  // transparent event-catching canvas in wrap
 
     this._events = new WidgetEvents();
 
@@ -485,6 +489,16 @@ export class Paint {
         row.querySelectorAll('button[data-tool]').forEach(b => {
           b.style.borderColor = b.dataset.tool === this._tool ? ACTIVE_COLOR : INACTIVE_BORDER;
         });
+        if (t.id === 'text') {
+          if (this._textLayer) {
+            this._textLayer.setDefaults({ color: this._color, fontSize: Math.max(12, this._brush * 2) });
+            this._textLayer.setActive(true);
+          }
+          if (this._hitCanvas) this._hitCanvas.style.pointerEvents = 'none';
+        } else {
+          this._textLayer?.setActive(false);
+          if (this._hitCanvas) this._hitCanvas.style.pointerEvents = 'auto';
+        }
         this._events.emit('tool', { tool: this._tool, prev });
       });
       row.appendChild(btn);
@@ -708,6 +722,7 @@ export class Paint {
     const prev = this._color;
     this._color = c;
     if (this._colorInput) this._colorInput.value = c;
+    this._textLayer?.setDefaults({ color: c });
     this._events.emit('color', { color: c, prev });
   }
 
@@ -761,6 +776,14 @@ export class Paint {
     wrap.appendChild(dc);
     wrap.appendChild(ov);
     wrap.appendChild(hit);
+
+    this._hitCanvas = hit;
+    this._textLayer = new TextLayer({
+      container: wrap,
+      left: 0, top: 0,
+      width:  this._w,
+      height: this._h,
+    });
 
     this._bindPointer(hit);
     return wrap;
@@ -1065,6 +1088,7 @@ export class Paint {
       ctx.fillRect(0, 0, this._w, this._h);
     }
     ctx.drawImage(frameCanvas, 0, 0);
+    if (this._textLayer) this._textLayer.renderToContext(ctx);
     return c;
   }
 
@@ -1101,6 +1125,13 @@ export class Paint {
             }
             ctx.drawImage(fc, i * this._w, 0);
           });
+          // Text objects at current positions appear on every sheet frame
+          if (this._textLayer) {
+            ctx.save();
+            ctx.translate(0, 0);
+            this._textLayer.renderToContext(ctx);
+            ctx.restore();
+          }
           return c;
         })()
       : this._compositeFrame(this._frames[this._fi]);
@@ -1126,6 +1157,19 @@ export class Paint {
   onFrame(fn)  { this._events.on('frame',  fn); return this; }
 
   /**
+   * Place a persistent text object on the canvas.
+   * @param {string} text
+   * @param {number} x
+   * @param {number} y
+   * @param {object} [opts] — { fontSize, fontFamily, color, bold, italic, align, rotation, kerning, curve }
+   * @returns {object} handle — { id, setText, setStyle, moveTo, remove, on }
+   */
+  addText(text, x, y, opts = {}) {
+    if (!this._textLayer) return null;
+    return this._textLayer.addText(text, x, y, { color: this._color, ...opts }, { runScoped: false });
+  }
+
+  /**
    * Live decaying-pulse signal.
    * @param {string}  [event='stroke']   — 'stroke' | 'color' | 'tool' | 'frame' | '*'
    * @param {object}  [opts]
@@ -1142,6 +1186,8 @@ export class Paint {
   _destroy() {
     this.stop();
     this._destroyBackdrop();
+    this._textLayer?.destroy();
+    this._textLayer = null;
     this._events.clear();
     const i = _paints.indexOf(this);
     if (i !== -1) _paints.splice(i, 1);

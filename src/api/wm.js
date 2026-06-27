@@ -9,14 +9,17 @@ import { onReset } from '../runtime/reset-registry.js';
 import { notify, registerCommand } from '../events/index.js';
 import { recordStream, compositeCanvasStream } from './recorder.js';
 import { acquireCamera, acquireMic } from './media-lease.js';
+import { TextLayer } from './text-layer.js';
 
 // ── Paint-overlay WidgetEvents registry (for cleanupPaintOverlays) ────────────
 
 const _overlayEvents = new Set();
+const _textLayers    = new Set();
 
-/** Called on every editor reset — clears all overlay event hooks. */
+/** Called on every editor reset — clears overlay hooks and run-scoped text objects. */
 export function cleanupPaintOverlays() {
   for (const ev of _overlayEvents) ev.clear();
+  for (const tl of _textLayers)    tl.clearRunScoped();
 }
 
 // ── File browser helpers ──────────────────────────────────────────────────────
@@ -491,9 +494,10 @@ export function initWM(onContentResize) {
   // Paint editor with that composite as a backdrop.
   // ── Snapshot visual to persistent desktop PNG ──────────────────────────────
   function _snapshotVisual(win, body, visualEl, { name, download = false } = {}) {
-    const overlay = win._getOverlay?.();
-    // Composite all non-overlay canvases (multi-layer output windows)
-    const canvases = [...body.querySelectorAll('canvas')].filter(c => c !== overlay);
+    const overlay    = win._getOverlay?.();
+    const textCanvas = win._getTextCanvas?.();
+    // Composite all non-overlay, non-text canvases (multi-layer output windows)
+    const canvases = [...body.querySelectorAll('canvas')].filter(c => c !== overlay && c !== textCanvas);
     let w, h;
     if (canvases.length > 0) {
       w = canvases[0].width || 320;
@@ -510,7 +514,8 @@ export function initWM(onContentResize) {
     } else {
       try { ctx.drawImage(visualEl, 0, 0, w, h); } catch (_) {}
     }
-    if (overlay) { try { ctx.drawImage(overlay, 0, 0, w, h); } catch (_) {} }
+    if (overlay)    { try { ctx.drawImage(overlay,    0, 0, w, h); } catch (_) {} }
+    if (textCanvas) { try { ctx.drawImage(textCanvas, 0, 0, w, h); } catch (_) {} }
     const snapName = name ?? (win.querySelector('.wm-title')?.textContent?.trim() || 'snapshot') + '.png';
     c.toBlob(blob => {
       if (!blob) return;
@@ -520,15 +525,23 @@ export function initWM(onContentResize) {
 
   // ── Start recording a visual window → desktop WebM ─────────────────────────
   function _recordVisual(win, body, visualEl, { fps = 30, name } = {}) {
-    const overlay = win._getOverlay?.();
-    const canvases = [...body.querySelectorAll('canvas')].filter(c => c !== overlay);
+    const overlay    = win._getOverlay?.();
+    const textCanvas = win._getTextCanvas?.();
+    // Base canvases exclude overlay (paint strokes) and text; we composite them on top.
+    const baseCanvases = [...body.querySelectorAll('canvas')].filter(c => c !== overlay && c !== textCanvas);
+    // Final composite order: base → paint overlay → text
+    const all = [
+      ...baseCanvases,
+      ...(overlay    ? [overlay]    : []),
+      ...(textCanvas ? [textCanvas] : []),
+    ];
     let stream, stopCompositor = null;
-    if (canvases.length > 1) {
-      const comp = compositeCanvasStream(canvases, fps);
+    if (all.length > 1) {
+      const comp = compositeCanvasStream(all, fps);
       stream = comp.stream;
       stopCompositor = comp.stop;
-    } else if (canvases.length === 1) {
-      stream = canvases[0].captureStream?.(fps);
+    } else if (all.length === 1) {
+      stream = all[0].captureStream?.(fps);
     } else if (visualEl?.tagName === 'VIDEO') {
       stream = visualEl.captureStream?.() ?? visualEl.mozCaptureStream?.();
     }
@@ -626,10 +639,29 @@ export function initWM(onContentResize) {
     };
 
     // overlay canvas (created lazily when first activated)
-    let overlay  = null;
-    let miniBar  = null;
-    let colorIn  = null;
-    win._getOverlay = () => overlay;
+    let overlay   = null;
+    let miniBar   = null;
+    let colorIn   = null;
+    let textLayer = null;
+    win._getOverlay     = () => overlay;
+    win._getTextCanvas  = () => textLayer?.canvas ?? null;
+
+    // Create (or return) the TextLayer for this window — deferred so we run
+    // after the window is in the DOM and getBoundingClientRect is valid.
+    win._ensureTextLayer = () => {
+      if (textLayer) return textLayer;
+      body.style.position = 'relative';
+      const r = getVisualRect();
+      textLayer = new TextLayer({
+        container: body,
+        left:   r.left,
+        top:    r.top,
+        width:  Math.round(r.w) || 320,
+        height: Math.round(r.h) || 240,
+      });
+      _textLayers.add(textLayer);
+      return textLayer;
+    };
 
     // ── Undo / Redo ───────────────────────────────────────────────────────────
     let _undoStack = [];
@@ -703,6 +735,10 @@ export function initWM(onContentResize) {
     const buildOverlay = () => {
       if (overlay) return;
       const r = getVisualRect();
+      // Ensure text layer exists and is correctly sized/positioned.
+      const tl = win._ensureTextLayer();
+      tl.updateRect(r.left, r.top, Math.round(r.w) || 320, Math.round(r.h) || 240);
+
       overlay = document.createElement('canvas');
       overlay.width  = Math.round(r.w) || 320;
       overlay.height = Math.round(r.h) || 240;
@@ -770,6 +806,13 @@ export function initWM(onContentResize) {
         penBtn.style.borderColor    = t === 'pen'    ? '#cba6f7' : '#45475a';
         eraserBtn.style.borderColor = t === 'eraser' ? '#cba6f7' : '#45475a';
         textBtn.style.borderColor   = t === 'text'   ? '#cba6f7' : '#45475a';
+        if (t === 'text') {
+          const tl = win._ensureTextLayer();
+          tl.setDefaults({ color, fontSize: Math.max(12, brushSize * 2) });
+          tl.setActive(true);
+        } else {
+          textLayer?.setActive(false);
+        }
         _updateCursor();
         events.emit('tool', { tool: t, winId: win.id });
       };
@@ -795,6 +838,7 @@ export function initWM(onContentResize) {
       colorIn.addEventListener('input', () => {
         const prev = color; color = colorIn.value;
         colorSwatch.style.background = color;
+        textLayer?.setDefaults({ color });
         events.emit('color', { color, prev, winId: win.id });
       });
       colorIn.addEventListener('change', () => { _pickerOpen = false; });
@@ -805,7 +849,11 @@ export function initWM(onContentResize) {
       sizeSlider.type  = 'range'; sizeSlider.min = '1'; sizeSlider.max = '48'; sizeSlider.value = String(brushSize);
       sizeSlider.title = 'Brush size';
       sizeSlider.style.cssText = 'width:55px;accent-color:#cba6f7;flex-shrink:0;';
-      sizeSlider.addEventListener('input', () => { brushSize = parseInt(sizeSlider.value, 10); _updateCursor(); });
+      sizeSlider.addEventListener('input', () => {
+        brushSize = parseInt(sizeSlider.value, 10);
+        textLayer?.setDefaults({ fontSize: Math.max(12, brushSize * 2) });
+        _updateCursor();
+      });
 
       // Undo / Redo
       let undoBtn, redoBtn;
@@ -844,56 +892,11 @@ export function initWM(onContentResize) {
 
     const removeMiniBar = () => { miniBar?.remove(); miniBar = null; _updateHistBtns = null; };
 
-    // ── Text tool ─────────────────────────────────────────────────────────────
-
-    const _spawnTextInput = (e) => {
-      const bodyRect  = body.getBoundingClientRect();
-      const { x, y } = getPos(e);
-      const fontSize  = Math.max(12, brushSize * 2);
-
-      const inp = document.createElement('input');
-      inp.type = 'text';
-      inp.style.cssText = [
-        'position:absolute;',
-        `left:${e.clientX - bodyRect.left}px;`,
-        `top:${e.clientY - bodyRect.top}px;`,
-        'transform:translateY(-50%);',
-        'background:transparent;border:none;border-bottom:1px dashed rgba(255,255,255,0.45);',
-        `color:${color};font-size:${fontSize}px;`,
-        'outline:none;min-width:60px;z-index:52;padding:0 2px;',
-      ].join('');
-      body.appendChild(inp);
-      inp.focus();
-
-      let _committed = false;
-      const commit = () => {
-        if (_committed) return;
-        _committed = true;
-        const text = inp.value.trim();
-        inp.remove();
-        if (!text || !overlay) return;
-        const ctx = overlay.getContext('2d');
-        ctx.save();
-        ctx.font = `${fontSize}px sans-serif`;
-        ctx.fillStyle = color;
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.fillText(text, x, y);
-        ctx.restore();
-        _histPush();
-        events.emit('stroke', { tool: 'text', color, winId: win.id, bbox: null });
-      };
-
-      inp.addEventListener('blur', commit);
-      inp.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter')  { ev.preventDefault(); inp.blur(); }
-        if (ev.key === 'Escape') { _committed = true; inp.remove(); }
-      });
-    };
-
     // ── Drawing ──────────────────────────────────────────────────────────────
+    // Text tool clicks are handled by TextLayer's posDiv — onDown ignores them.
 
     const onDown = (e) => {
-      if (tool === 'text') { _spawnTextInput(e); return; }
+      if (tool === 'text') return;
       e.preventDefault();
       overlay.setPointerCapture(e.pointerId);
       drawing = true;
@@ -982,13 +985,14 @@ export function initWM(onContentResize) {
     const firstBtn = tb.querySelector('.wm-btn');
     tb.insertBefore(paintBtn, firstBtn);
 
-    // Cleanup: remove overlay + minibar when window closes
+    // Cleanup: remove overlay + minibar + text layer when window closes
     const prevCleanup = win._wmCleanup;
     win._wmCleanup = (...args) => {
       removeOverlay();
       removeMiniBar();
       events.clear();
       _overlayEvents.delete(events);
+      if (textLayer) { _textLayers.delete(textLayer); textLayer.destroy(); textLayer = null; }
       if (typeof prevCleanup === 'function') prevCleanup(...args);
     };
   }
@@ -2256,6 +2260,25 @@ export function initWM(onContentResize) {
       const ev = this.paintEvents(id);
       if (!ev) { console.warn('[wm.paintSignal] no paint overlay on window', id); return null; }
       return ev.signal(event, opts);
+    },
+
+    /**
+     * Place a persistent text object on top of any visual window.
+     * Returns a handle: { id, setText, setStyle, moveTo, remove, on }
+     * handle.on supports: 'move' | 'edit' | 'select' | 'deselect'
+     * Run-scoped — removed on editor reset. Interactive objects (placed via 🖌️ T tool) survive resets.
+     * @param {string} id       — window id
+     * @param {string} text     — initial text content
+     * @param {number} x        — x position in canvas px
+     * @param {number} y        — y position in canvas px
+     * @param {object} [opts]   — { fontSize, fontFamily, color, bold, italic, align, rotation, kerning, curve }
+     *   curve: null | { type:'arc', radius:number }  (radius>0=arc up, <0=arc down)
+     */
+    addText(id, text, x, y, opts = {}) {
+      const win = getWin(id);
+      if (!win) { console.warn('[wm.addText] window not found:', id); return null; }
+      if (!win._ensureTextLayer) { console.warn('[wm.addText] window has no text layer (must be image/video/camera/canvas/shader type):', id); return null; }
+      return win._ensureTextLayer().addText(text, x, y, opts, { runScoped: true });
     },
 
     /** Set a CSS filter on a window body (e.g. 'brightness(2)' to flash it). Pass null/'' to clear. */

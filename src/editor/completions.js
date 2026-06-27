@@ -1952,6 +1952,18 @@ audio.start();`,
         hint: "wm.paintSignal(id, event?, opts?) → { value, velocity, stream, on }. Live 0–1 signal from the paint overlay on a window. Supports region:{x,y,w,h} in overlay canvas px.",
         tags: ["wm", "overlay", "paint", "signal", "decay", "reactive", "window", "stream"],
       },
+      {
+        label: "wm.addText — live text overlay",
+        code: "const cam = wm.spawn('Cam', { type: 'camera', w: 640, h: 480 });\nconst t = wm.addText(cam, 'Hello', 40, 40, {\n  fontSize: 36, color: '#fff', bold: true,\n});\n// live-update each tick:\ntick(() => t.setText('fps: ' + Math.round(1000 / (Date.now() - (_t = _t || Date.now(), _t = Date.now()))));\n// t.setStyle({ color:'#f00', rotation: 15, kerning: 2 })\n// t.moveTo(100, 80)\n// t.remove()",
+        hint: "wm.addText(winId, text, x, y, opts?) — place a text object on any visual window. Returns a handle: setText / setStyle / moveTo / remove / on('move'|'edit'|'select'|'deselect'). Run-scoped (cleared on reset). opts: { fontSize, fontFamily, color, bold, italic, align, rotation, kerning, curve:{type:'arc',radius} }.",
+        tags: ["wm", "text", "overlay", "live", "camera", "label", "font", "arc"],
+      },
+      {
+        label: "wm.addText — arc curve",
+        code: "const id = wm.spawn('Canvas', { type: 'canvas', w: 500, h: 500 });\nwm.addText(id, 'VISUAL LIVE', 250, 200, {\n  fontSize: 28, color: '#cba6f7', bold: true,\n  curve: { type: 'arc', radius: 120 },\n  kerning: 3,\n});",
+        hint: "curve:{type:'arc',radius} — positive radius arcs text upward, negative arcs downward. The (x,y) position is the visual anchor at the midpoint of the arc.",
+        tags: ["wm", "text", "arc", "curve", "overlay", "font"],
+      },
     ],
   },
   {
