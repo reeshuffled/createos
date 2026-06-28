@@ -318,7 +318,10 @@ const dp   = audio.drumpad({ title, x, y, w, h })  // 8-pad drum machine + 16-st
   dp.onHit(fn)            // fn({vi,id,label,source,step}) — any pad
   dp.onPad('kick', fn)    // fn({vi,id,label,source,step}) — scoped to one pad (index 0-7 or name)
   dp.onStep(fn)           // fn({step,activeVoices:[vi…]}) — once per sequencer step while playing
-  // source: 'pad' | 'key' | 'seq'
+  // source: 'pad' | 'key' | 'seq' | 'midi'    // event payload also carries velocity (0–1)
+  // MIDI (ADR 033): no code needed. Focus a Drum Pad → it becomes the MIDI Target
+  //   (sticky; survives editing). General MIDI drum map (36→kick, 38→snare, 42→hh…).
+  //   Click the 🎹 chip once to grant access (non-MIDI users are never prompted).
 
   const sig = dp.signal('kick', { decay: 250 })  // decaying-pulse signal scoped to a pad
   const sig = dp.signal()                          // whole-kit signal (any pad)
@@ -720,6 +723,8 @@ Every interactive widget (Drumpad, Piano, SpriteEditor, AsciiEditor, Notepad, Pa
 
 A solo capture emits `<ctor>; <var>.replay([...])`. The desktop **Global Capture ●** (top toolbar) arms every open widget on one shared clock and emits a single `timeline()` composing one track per widget.
 
+**MIDI input (ADR 033):** Piano and Drum Pad receive Web MIDI with no code. Focusing one makes it the **MIDI Target** (sticky — keeps MIDI while you edit code; switches only when you focus another instrument). Piano maps note numbers → notes with true note-on/off sustain (and, when a sequencer step is selected, MIDI programs that step); Drum Pad uses the General MIDI drum map (one-shot). Velocity drives loudness and appears in `onNote`/`onHit` payloads, and MIDI playing is captured into a Take like mouse/keyboard. Access is permission-aware: the 🎹 chip lights on the current target; users with no controller are never prompted — click the dormant chip once to opt in.
+
 ```js
 // Solo — replay a recorded take
 const p = new Piano({ preset: 'epiano' });
@@ -745,7 +750,7 @@ timeline()
 | `tl.play({ loop? })` | `tl` | Start all tracks on one clock |
 | `tl.stop()` | `tl` | Stop the timeline |
 
-Per-widget action verbs used by replay (also callable directly): `dp.hit(voice)`, `p.strike(note, durMs)`, `sp.pixel(x,y,color)`, `ed.cell(c,r,ch,fg,bg)`, `pt.stroke(pts, {tool,color,size})`, `np.insert(text)`. Action schemas: Drumpad `{t,vi}` · Piano `{t,note,dur}` · Sprite `{t,op:'pixel'|'frame',…}` · Ascii `{t,op:'cell'|'frame',…}` · Notepad `{t,ch}` (`'\b'`=backspace) · Paint `{t,op:'stroke',tool,color,size,pts:[{x,y,dt}]}`. All times are wall-clock ms from take start. Replays are run-scoped (stop on reset) and keep the run alive while playing; performances are never saved to `.vljson` — the emitted code is their persistence.
+Per-widget action verbs used by replay (also callable directly): `dp.hit(voice)`, `p.strike(note, durMs, vel?)`, `sp.pixel(x,y,color)`, `ed.cell(c,r,ch,fg,bg)`, `pt.stroke(pts, {tool,color,size})`, `np.insert(text)`. Action schemas: Drumpad `{t,vi,vel}` · Piano `{t,note,dur,vel}` · Sprite `{t,op:'pixel'|'frame',…}` · Ascii `{t,op:'cell'|'frame',…}` · Notepad `{t,ch}` (`'\b'`=backspace) · Paint `{t,op:'stroke',tool,color,size,pts:[{x,y,dt}]}`. All times are wall-clock ms from take start. Replays are run-scoped (stop on reset) and keep the run alive while playing; performances are never saved to `.vljson` — the emitted code is their persistence.
 
 ---
 

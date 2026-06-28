@@ -17,6 +17,7 @@ import { mountWidgetShell, wireCaptureButton } from './widget-shell.js';
 import { onReset }         from '../runtime/reset-registry.js';
 import { Take }            from './performance-recorder.js';
 import { replayActions }   from './replay-clock.js';
+import { registerMidiInstrument, unregisterMidiInstrument, enableMidiFor, notifyMidiFocus } from './midi-bind.js';
 
 // ── Module-level registry ─────────────────────────────────────────────────────
 
@@ -43,6 +44,13 @@ function noteToMidi(note) {
   const ci = _CHROMA.indexOf(m[1]);
   if (ci < 0) return 60;
   return (parseInt(m[2]) + 1) * 12 + ci;
+}
+
+// Inverse of noteToMidi: MIDI note number → note string (60 → 'C4').
+function midiToNote(num) {
+  const ci  = ((num % 12) + 12) % 12;
+  const oct = Math.floor(num / 12) - 1;
+  return _CHROMA[ci] + oct;
 }
 
 // ── Built-in presets ──────────────────────────────────────────────────────────
@@ -177,6 +185,10 @@ export class Piano {
     _pianos.push(this);
 
     this._init(title, x, y, w, h);
+
+    // MIDI binding (ADR 033): register, then claim focus (the window just spawned
+    // frontmost). Permission is checked silently — no prompt unless already granted.
+    if (this._winId) { registerMidiInstrument(this); notifyMidiFocus(this); }
 
     if (initSteps) {
       initSteps.forEach((notes, si) => {
@@ -571,6 +583,14 @@ export class Piano {
     capBtn.style.padding = '3px 7px';
     wireCaptureButton(capBtn, { take: this._take, widget: this });
     ctrl.appendChild(capBtn);
+
+    // ── MIDI chip (ADR 033) — opt-in / target indicator ─────────────────────────
+    const midiChip = _mkBtn('🎹', '#45475a');
+    midiChip.style.padding = '3px 7px';
+    this._midiChip = midiChip;
+    this._setMidiChip('dormant');
+    midiChip.addEventListener('click', () => enableMidiFor(this));
+    ctrl.appendChild(midiChip);
     return ctrl;
   }
 
@@ -658,18 +678,18 @@ export class Piano {
     if (this._octLbl) this._octLbl.textContent = `Oct:${this._kbdOctave}`;
   }
 
-  /** pointerdown / keydown → start holding note */
-  _triggerAttack(note, source) {
+  /** pointerdown / keydown / MIDI → start holding note. vel 0-1 (default 1). */
+  _triggerAttack(note, source, vel = 1) {
     if (this._heldNotes.has(note)) return;
     this._heldNotes.add(note);
-    try { this._synth.triggerAttack(note, Tone.now()); } catch (_) {}
+    try { this._synth.triggerAttack(note, Tone.now(), vel); } catch (_) {}
     this._setKeyActive(note, true);
-    this._fireNote(note, source, null);
+    this._fireNote(note, source, null, vel);
     // Performance capture: record live attacks; dur is back-filled on release.
     // Replay-driven attacks (source 'replay') are excluded so replay never
     // re-records.
     if (source !== 'replay') {
-      const rec = this._take.push({ note, dur: 0 });
+      const rec = this._take.push({ note, dur: 0, vel });
       if (rec) this._recNotes.set(note, { rec, start: performance.now() });
     }
   }
@@ -685,24 +705,57 @@ export class Piano {
     if (e) { e.rec.dur = Math.max(1, Math.round(performance.now() - e.start)); this._recNotes.delete(note); }
   }
 
-  _fireNote(note, source, step) {
+  _fireNote(note, source, step, vel = 1) {
     const midi = noteToMidi(note);
-    const ev   = { note, midi, velocity: 1, source, step };
+    const ev   = { note, midi, velocity: vel, source, step };
     this._events.emit('note', ev);
     this._events.emit(`note:${note}`, ev);
+  }
+
+  // ── MIDI input (ADR 033) — driven by the focus-routed coordinator ────────────
+  // note-on/off give true sustain; with a step selected, note-on programs that
+  // step (mirroring mouse). source 'midi' so live MIDI is captured into the Take.
+  _midiNoteOn(num, vel = 1) {
+    const note = midiToNote(num);
+    if (this._selectedStep !== null) this._toggleNoteInStep(note, this._selectedStep);
+    else                             this._triggerAttack(note, 'midi', vel);
+  }
+
+  _midiNoteOff(num) {
+    if (this._selectedStep !== null) return;
+    this._triggerRelease(midiToNote(num));
+  }
+
+  /** Chip appearance: 'dormant' (grey, click to enable) | 'idle' | 'target'. */
+  _setMidiChip(state) {
+    const c = this._midiChip;
+    if (!c) return;
+    if (state === 'target') {
+      c.style.color = '#a6e3a1'; c.style.borderColor = '#a6e3a1';
+      c.style.opacity = '1'; c.style.boxShadow = '0 0 6px #a6e3a155';
+      c.title = 'MIDI input → this Piano';
+    } else if (state === 'idle') {
+      c.style.color = '#6c7086'; c.style.borderColor = '#313244';
+      c.style.opacity = '0.7'; c.style.boxShadow = '';
+      c.title = 'MIDI on — focus this Piano to play it';
+    } else {
+      c.style.color = '#45475a'; c.style.borderColor = '#313244';
+      c.style.opacity = '0.55'; c.style.boxShadow = '';
+      c.title = 'Enable MIDI input';
+    }
   }
 
   // ── Performance capture / replay (ADR 031) ──────────────────────────────────
   // Public timed-note verb: attack now, release after `dur` ms (patched
   // setTimeout → run-scoped, pauses/cleans with the harness).
-  strike(note, dur = 200) {
-    this._triggerAttack(note, 'replay');
+  strike(note, dur = 200, vel = 1) {
+    this._triggerAttack(note, 'replay', vel);
     const ms = typeof dur === 'number' && dur > 0 ? dur : 200;
     window.setTimeout(() => this._triggerRelease(note), ms);
     return this;
   }
 
-  _applyAction(a) { if (a && a.note) this.strike(a.note, a.dur); }
+  _applyAction(a) { if (a && a.note) this.strike(a.note, a.dur, a.vel ?? 1); }
 
   replay(actions, opts) {
     return replayActions(act => this._applyAction(act), actions, opts);
@@ -869,6 +922,7 @@ export class Piano {
   _destroy() {
     this._stop();
     this._clearHooks();
+    unregisterMidiInstrument(this);
     const idx = _pianos.indexOf(this);
     if (idx >= 0) _pianos.splice(idx, 1);
     if (this._onKey) {

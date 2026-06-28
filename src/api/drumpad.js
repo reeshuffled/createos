@@ -17,6 +17,20 @@ import { mountWidgetShell, wireCaptureButton } from './widget-shell.js';
 import { onReset } from '../runtime/reset-registry.js';
 import { Take } from './performance-recorder.js';
 import { replayActions } from './replay-clock.js';
+import { registerMidiInstrument, unregisterMidiInstrument, enableMidiFor, notifyMidiFocus } from './midi-bind.js';
+
+// General MIDI percussion note → voice id (ADR 033). Common aliases included.
+// Unmapped notes are ignored.
+const GM_DRUM_MAP = {
+  35: 'kick', 36: 'kick',
+  38: 'snare', 40: 'snare',
+  42: 'hhc', 44: 'hhc',
+  46: 'hho',
+  39: 'clap',
+  41: 'tomL', 43: 'tomL', 45: 'tomL',
+  47: 'tomH', 48: 'tomH', 50: 'tomH',
+  49: 'cym', 51: 'cym', 57: 'cym',
+};
 
 // ── Module-level registry ─────────────────────────────────────────────────────
 
@@ -116,6 +130,10 @@ export class Drumpad {
     _drumpads.push(this);
 
     this._init(title, x, y, w, h);
+
+    // MIDI binding (ADR 033): register, then claim focus (window spawned frontmost).
+    if (this._winId) { registerMidiInstrument(this); notifyMidiFocus(this); }
+
     if (initPatterns) {
       initPatterns.forEach((steps, vi) => {
         steps?.forEach((on, s) => { if (on) this.step(vi, s, true); });
@@ -134,9 +152,9 @@ export class Drumpad {
   }
 
   // ── Fire hit event via WidgetEvents ──────────────────────────────────────────
-  _fireHit(vi, source, step) {
+  _fireHit(vi, source, step, vel = 1) {
     const v  = this._voices[vi];
-    const ev = { vi, id: v?.id ?? vi, label: v?.label ?? String(vi), source, step };
+    const ev = { vi, id: v?.id ?? vi, label: v?.label ?? String(vi), source, step, velocity: vel };
     this._events.emit('hit', ev);
   }
 
@@ -144,11 +162,44 @@ export class Drumpad {
   _trigger(vi, time = Tone.now(), ctx = {}) {
     const v = this._voices[vi];
     if (!v?.synth) return;
+    const vel = ctx.vel ?? 1;
     try {
-      if (v.note) v.synth.triggerAttackRelease(v.note, v.dur, time);
-      else        v.synth.triggerAttackRelease(v.dur, time);
+      if (v.note) v.synth.triggerAttackRelease(v.note, v.dur, time, vel);
+      else        v.synth.triggerAttackRelease(v.dur, time, vel);
     } catch (_) {}
-    this._fireHit(vi, ctx.source ?? 'pad', ctx.step ?? null);
+    this._fireHit(vi, ctx.source ?? 'pad', ctx.step ?? null, vel);
+  }
+
+  // ── MIDI input (ADR 033) — driven by the focus-routed coordinator ────────────
+  // One-shot: note-on maps via the GM drum map and triggers; note-off is ignored.
+  // source 'midi' (not 'replay') so live MIDI is captured into the Take.
+  _midiNoteOn(num, vel = 1) {
+    const vi = this._voiceIndex(GM_DRUM_MAP[num]);
+    if (vi == null) return;
+    this._take.push({ vi, vel });
+    this._trigger(vi, Tone.now(), { source: 'midi', vel });
+    this._voices[vi]._flash?.();
+  }
+
+  _midiNoteOff() { /* one-shot voices — nothing to release */ }
+
+  /** Chip appearance: 'dormant' (grey, click to enable) | 'idle' | 'target'. */
+  _setMidiChip(state) {
+    const c = this._midiChip;
+    if (!c) return;
+    if (state === 'target') {
+      c.style.color = '#a6e3a1'; c.style.borderColor = '#a6e3a1';
+      c.style.opacity = '1'; c.style.boxShadow = '0 0 6px #a6e3a155';
+      c.title = 'MIDI input → this Drum Pad (GM map)';
+    } else if (state === 'idle') {
+      c.style.color = '#6c7086'; c.style.borderColor = '#313244';
+      c.style.opacity = '0.7'; c.style.boxShadow = '';
+      c.title = 'MIDI on — focus this Drum Pad to play it';
+    } else {
+      c.style.color = '#45475a'; c.style.borderColor = '#313244';
+      c.style.opacity = '0.55'; c.style.boxShadow = '';
+      c.title = 'Enable MIDI input';
+    }
   }
 
   // ── Performance capture / replay (ADR 031) ──────────────────────────────────
@@ -163,7 +214,7 @@ export class Drumpad {
 
   // Apply one recorded action {t, vi}.
   _applyAction(a) {
-    if (a && a.vi != null) this._trigger(a.vi, Tone.now(), { source: 'replay' });
+    if (a && a.vi != null) this._trigger(a.vi, Tone.now(), { source: 'replay', vel: a.vel ?? 1 });
   }
 
   // Replay a captured Take.
@@ -399,6 +450,13 @@ export class Drumpad {
     capBtn.style.padding = '3px 7px';
     wireCaptureButton(capBtn, { take: this._take, widget: this });
 
+    // ── MIDI chip (ADR 033) — opt-in / target indicator ─────────────────────────
+    const midiChip = _mkBtn('🎹', '#45475a');
+    midiChip.style.padding = '3px 7px';
+    this._midiChip = midiChip;
+    this._setMidiChip('dormant');
+    midiChip.addEventListener('click', () => enableMidiFor(this));
+
     ctrl.appendChild(playBtn);
     ctrl.appendChild(stopBtn);
     ctrl.appendChild(clearBtn);
@@ -406,6 +464,7 @@ export class Drumpad {
     ctrl.appendChild(bpmIn);
     ctrl.appendChild(codeBtn);
     ctrl.appendChild(capBtn);
+    ctrl.appendChild(midiChip);
     body.appendChild(ctrl);
 
     // ── Keyboard triggers ─────────────────────────────────────────────────────
@@ -510,6 +569,7 @@ export class Drumpad {
   _destroy(playBtn) {
     this._stop(playBtn);
     this._clearHooks();
+    unregisterMidiInstrument(this);
     const idx = _drumpads.indexOf(this);
     if (idx >= 0) _drumpads.splice(idx, 1);
     if (this._onKey) { document.removeEventListener('keydown', this._onKey); this._onKey = null; }

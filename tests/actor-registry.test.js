@@ -21,6 +21,7 @@ vi.mock('../src/events/index.js', () => ({
   any:             vi.fn(),
   hold:            vi.fn(),
   clearRunScoped:  vi.fn(),
+  addBusTap:       () => () => {},
 }));
 
 // ── Tone.js stub ─────────────────────────────────────────────────────────────
