@@ -462,15 +462,29 @@ const roll = audio.pianoRoll({
 });
 ```
 
-### EQ widget — `audio.eqWidget(opts)`
+### Mixer — `mixer` (ADR 032)
 
-Floating 3-band EQ panel. Tone-compatible — use `.chain()` like any Tone node.
+The live audio console. Every running instrument, window, mic and drumpad gets a
+**Strip** (volume / pan / mute / solo + VU meter + lazy 4-band parametric EQ) routed
+through to the **Master**. Open the panel from the toolbar 🎚️ button or from code.
 
 ```js
-const eq = audio.eqWidget({ x: 100, y: 100 });
-eq.low(-3).mid(2).high(-1)   // chainable setters (dB)
-synth.chain(eq)               // Tone-compatible
+const lead = audio.fm();
+pat('0 3 5 7').note(audio.scale('minor')).start({ id: 'lead', inst: lead });
+
+mixer.show();                              // open the console
+mixer.strip('lead').volume(-6).pan(-0.3);  // script a strip (chainable)
+mixer.strip('lead').solo();                // additive solo — non-soloed strips duck
+mixer.strip('lead').eq([{ freq: 2500, gain: 4 }]);
+mixer.master.volume(-2);                   // master strip
+mixer.add(someWebAudioNode, { name: 'fx' }); // bring an arbitrary node into the mix
 ```
+
+- Strip name = pattern id if given (`start({id:'lead'})`), else instrument-type+counter
+  (`fm 1`), window title, `mic`, or drumpad title. Rename in the panel (double-click).
+- Settings persist by name across re-runs (localStorage) and travel in the `.vljson`
+  project. Solo is a persisted per-strip flag.
+- The standalone `audio.eqWidget()` is gone — its role is now the Master strip's EQ.
 
 ---
 

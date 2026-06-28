@@ -88,7 +88,9 @@ export const PARAM_HINTS = {
   // Audio Viz Suite
   'audio.spectrogram':  ['source', 'opts?'],
   'audio.pianoRoll':    ['opts?'],
-  'audio.eqWidget':     ['opts?'],
+  // Mixer (ADR 032)
+  'mixer.strip':        ['name'],
+  'mixer.add':          ['node', 'opts?'],
 };
 
 // ── AST helpers ───────────────────────────────────────────────────────────────

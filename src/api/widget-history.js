@@ -1,5 +1,5 @@
 // widget-history.js — Shared per-widget undo/redo history
-// Used by SpriteEditor, Drumpad, EQWidget.
+// Used by SpriteEditor, Drumpad.
 // The global toolbar undo/redo (wm.undo/redo) remains window-only (geometry/visibility).
 
 let _installed = false;

@@ -9,6 +9,7 @@ import { onReset } from '../runtime/reset-registry.js';
 import { notify, registerCommand, tween } from '../events/index.js';
 import { recordStream, compositeCanvasStream } from './recorder.js';
 import { acquireCamera, acquireMic } from './media-lease.js';
+import { acquireStrip, releaseStrip } from './mixer.js';
 import { TextLayer } from './text-layer.js';
 import { liveOutput } from '../runtime/keep-alive.js';
 
@@ -441,20 +442,42 @@ export function initWM(onContentResize) {
     onContentResize?.();
   }
 
-  // Per-window Tone.Channel nodes — created lazily on first use
-  const _channels = new Map();
+  // Per-window mixer Strip (ADR 032) — window audio flows through the Mixer.
+  // _winStrips: winId → Strip. wm.channel(id) exposes the strip's Tone.Channel
+  // so Tone sources routed into it are mixable; window media is rebridged into
+  // the strip input so it appears as a Strip in the console.
+  const _winStrips = new Map();
 
-  function _getChannel(winId) {
-    if (!_channels.has(winId)) {
-      const ch = new Tone.Channel().toDestination();
-      _channels.set(winId, ch);
+  function _getWindowStrip(winId) {
+    let strip = _winStrips.get(winId);
+    if (!strip) {
+      const win = document.getElementById(winId);
+      const title = win?.querySelector('.wm-title')?.textContent?.trim() || winId;
+      strip = acquireStrip(title, { type: 'window', owner: winId, lifecycle: 'window' });
+      _winStrips.set(winId, strip);
     }
-    return _channels.get(winId);
+    return strip;
   }
 
+  function _getChannel(winId) { return _getWindowStrip(winId)._channel; }
+
   function _disposeChannel(winId) {
-    const ch = _channels.get(winId);
-    if (ch) { try { ch.dispose(); } catch (_) {} _channels.delete(winId); }
+    const strip = _winStrips.get(winId);
+    if (strip) { releaseStrip(strip.name); _winStrips.delete(winId); }
+  }
+
+  // Capture a window's <video>/<audio> element into the Web Audio graph and route
+  // it through its mixer strip. Same-origin / blob media (uploaded files) works;
+  // cross-origin without CORS may go silent, so the titlebar keeps element-volume
+  // as a fallback. Idempotent (MediaElementSource can only be created once).
+  function _routeMediaToStrip(winId, mediaEl) {
+    if (!mediaEl || mediaEl._ar_routedToStrip) return;
+    try {
+      const audioCtx = Tone.getContext().rawContext;
+      if (!mediaEl._ar_mediaSource) mediaEl._ar_mediaSource = audioCtx.createMediaElementSource(mediaEl);
+      Tone.connect(mediaEl._ar_mediaSource, _getWindowStrip(winId).input);
+      mediaEl._ar_routedToStrip = true;
+    } catch (_) {}
   }
 
   // Inject ↔ / ↕ flip buttons into a window's titlebar.
@@ -1061,16 +1084,19 @@ export function initWM(onContentResize) {
       volSlider.style.opacity = '0.4';
     }
 
+    // Rebridge media into the window's mixer strip (idempotent).
+    if (videoEl) _routeMediaToStrip(win.id, videoEl);
+
     function _apply() {
       const linear = parseFloat(volSlider.value) / 100;
       if (videoEl) {
+        // Keep element volume as a fallback for cross-origin media the graph can't capture.
         videoEl.muted = _muted;
         videoEl.volume = _muted ? 0 : linear;
       }
-      // Eagerly create channel so state is set even before user routes audio to it
-      const ch = _getChannel(win.id);
-      ch.mute = _muted;
-      ch.volume.value = linear <= 0 ? -60 : (linear - 1) * 40;
+      // Drive the mixer strip (persists by name, consistent solo/ducking).
+      const strip = _getWindowStrip(win.id);
+      window.mixer?.strip(strip.name).volume(linear <= 0 ? -60 : (linear - 1) * 40).mute(_muted);
     }
 
     muteBtn.addEventListener('click', e => {
@@ -1531,7 +1557,9 @@ export function initWM(onContentResize) {
         if (vid) {
           if (!vid._ar_mediaSource) {
             vid._ar_mediaSource = audioCtx.createMediaElementSource(vid);
-            vid._ar_mediaSource.connect(audioCtx.destination);
+            // Only send straight to destination if the window strip isn't already
+            // routing this element (ADR 032) — avoids doubling / silent capture.
+            if (!vid._ar_routedToStrip) vid._ar_mediaSource.connect(audioCtx.destination);
           }
           const an = audioCtx.createAnalyser();
           an.fftSize = 256; an.smoothingTimeConstant = 0.8;
@@ -1539,7 +1567,7 @@ export function initWM(onContentResize) {
           rawAn = an;
         }
       } else if (id.startsWith('ch:')) {
-        const ch = _channels.get(id.slice(3));
+        const ch = _winStrips.get(id.slice(3))?._channel;
         if (ch) {
           toneAn = new Tone.Analyser({ type: style === 'wave' ? 'waveform' : 'fft', size: 128 });
           ch.connect(toneAn);
@@ -1628,7 +1656,7 @@ export function initWM(onContentResize) {
       if (excludeSelf && w === win) return;
       const title = w.querySelector('.wm-title')?.textContent?.trim() || w.id;
       if (w.querySelector('video')) srcs.push({ id: 'vid:' + w.id, label: title + ' · video' });
-      if (_channels.has(w.id))     srcs.push({ id: 'ch:'  + w.id, label: title + ' · channel' });
+      if (_winStrips.has(w.id))    srcs.push({ id: 'ch:'  + w.id, label: title + ' · channel' });
     });
     return srcs;
   }

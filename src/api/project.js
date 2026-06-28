@@ -1,5 +1,6 @@
 import { saveWorkspaceJSON, loadWorkspaceJSON } from '../blocks/blocks.js';
 import { serializeDesktop, restoreDesktop } from './desktop-files.js';
+import { serializeMixer, restoreMixer } from './mixer.js';
 
 // ── Serialize ─────────────────────────────────────────────────────────────────
 
@@ -112,6 +113,7 @@ export function serializeProject(wm, instances) {
     version: 1,
     windows,
     desktop: serializeDesktop({ forProject: true }),
+    mixer: serializeMixer(),
   };
 }
 
@@ -134,6 +136,7 @@ export async function applyProject(data, wm, instances, appAPI) {
   wm.closeAll();
   // Restore desktop positions before editors are created — addEditorIcon picks them up.
   restoreDesktop(data.desktop ?? []);
+  restoreMixer(data.mixer);
 
   const editorEntries = data.windows.filter(w => w.type === 'editor');
   const editorIds = [];

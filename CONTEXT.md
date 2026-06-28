@@ -74,5 +74,17 @@ A styled, positioned text element managed by a **Text Layer**. Has content, posi
 ### Text Layer
 The subsystem (`src/api/text-layer.js`) shared by the WM paint overlay and the standalone `Paint` widget. Owns the array of **Text Objects**, their interaction DOM nodes, and a **mirror canvas** that re-renders all objects on every change. The mirror canvas is composited in snapshot and recording output alongside the raster overlay — after base canvases and the paint overlay, so text always appears on top. See ADR 024.
 
+### Mixer
+The live audio console (`window.mixer`, WM panel + toolbar button). Auto-discovers every running **Audio Source** and presents one **Strip** per source, plus the **Master** strip. The single surface for leveling, panning, EQ'ing, muting and soloing everything the IDE is making sound with — Tone and non-Tone alike. Replaces the former standalone EQ widget. See ADR 032.
+
+### Audio Source
+Anything audible that the Mixer can carry: a Tone **Instrument**, a window's media element (`<video>`/HTML audio), the mic (`UserMedia`), a Drumpad, or an arbitrary raw WebAudio node. A **Pattern** is *not* a source — it is a scheduler that triggers an Instrument; in the Mixer it appears as a sub-row under its Instrument's Strip, not as its own Strip.
+
+### Strip
+One channel of the Mixer: a `Tone.Channel` (volume / pan / mute / solo, with a live VU **Meter**) inserted between an Audio Source and the Master. Optionally carries a lazily-inserted 4-band parametric **EQ** (spliced in on first touch, not present on idle strips). Every Instrument gets a Strip eagerly at construction. A Strip is identified by **name** — pattern id if given, else instrument-type+counter, window title, `mic`, or drumpad title — and is renamable. Strip lifecycle follows its source: run-scoped (instrument / mic / raw node, wiped on reset), window-scoped (window media / drumpad, survive reset, die on window close), or persistent (Master). Settings persist by name in localStorage and travel in the `.vljson` project.
+
+### Master
+The final output Strip — `Tone.getDestination()`. All Strips feed it, so the existing master FFT and mute-via-destination paths keep working unchanged. Carries its own EQ and Meter; takes over the role the standalone global EQ widget used to play.
+
 ### Event Stream Panel
 A floating WM window that shows a live rate-limited feed of bus events during a run. One row per unique event name; repeat fires within 200 ms increment a counter badge (`×N`) rather than spawning new rows. Rows are expandable to show full payload (depth-2 JSON tree). Default filter excludes harness-internal prefixes (`editor:`, `session:`, `wm:`). Implemented via a bus tap (`addBusTap`) — not a run-scoped subscription. See ADR 019.

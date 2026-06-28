@@ -7,7 +7,8 @@ import { audio, startAudio, cleanupAudio, Pattern } from "../api/audio.js";
 import { Shader, ShaderFX, cleanupShaders } from "../api/shader.js";
 import { GLShader, GLSL_PRESETS } from "../api/glsl-shader.js";
 import { initPixi, PIXI } from "../api/pixi.js";
-import { AudioViz, SpectrogramCanvas, PianoRollViz, EQWidget, cleanupViz } from "../api/viz.js";
+import { AudioViz, SpectrogramCanvas, PianoRollViz, cleanupViz } from "../api/viz.js";
+import { mixer, openMixerPanel } from "../api/mixer.js";
 import { Drumpad } from "../api/drumpad.js";
 import { Piano, cleanupPianos } from "../api/piano.js";
 import { Notepad } from "../api/notepad.js";
@@ -91,7 +92,7 @@ _registerBuiltin('Camera',   Camera);
 _registerBuiltin('AudioViz',          AudioViz);
 _registerBuiltin('SpectrogramCanvas', SpectrogramCanvas);
 _registerBuiltin('PianoRollViz',      PianoRollViz);
-_registerBuiltin('EQWidget',          EQWidget);
+_registerBuiltin('mixer',             mixer);
 _registerBuiltin('Drumpad',           Drumpad);
 _registerBuiltin('Piano',             Piano);
 _registerBuiltin('Notepad',           Notepad);
@@ -245,10 +246,9 @@ window.onload = () => {
     content: s.widgetState?.content,
     _desktopIconId: s.widgetState?._desktopIconId,
   });
-  window.__ar_widgetRestorers['eq'] = (s) => new EQWidget({
-    title: s.title, x: s.x, y: s.y, w: s.w, h: s.h,
-    low: s.widgetState?.low, mid: s.widgetState?.mid, high: s.widgetState?.high,
-  });
+  // Legacy projects may carry an 'eq' widget — graceful no-op (ADR 032 removed EQWidget).
+  window.__ar_widgetRestorers['eq'] = () => {};
+  window.__ar_widgetRestorers['mixer'] = () => openMixerPanel();
   window.__ar_widgetRestorers['paint'] = (s) => {
     const ws = s.widgetState ?? {};
     const frameUrls = ws.frames ?? [];
@@ -685,8 +685,8 @@ window.onload = () => {
           const offset = (_vizCount++ % 8) * 24;
           window.wm.spawn('Visualizer', { type: 'viz', w: 400, h: 240, x: cx + offset, y: cy + offset });
         }},
-        { icon: 'fa-sliders', label: 'New EQ Widget', action() {
-          new EQWidget({ title: 'EQ', w: 420, h: 220, x: cx, y: cy });
+        { icon: 'fa-sliders', label: 'Mixer', action() {
+          openMixerPanel();
         }},
         { icon: 'fa-gauge-high', label: 'Motion Sensor', action() {
           window.wm.spawn('Motion Sensor', { type: 'sensor', source: 'motion', w: 280, h: 300, x: cx, y: cy });
@@ -777,16 +777,9 @@ window.onload = () => {
     });
   });
 
-  // ── "New EQ Widget" button ─────────────────────────────────────────────────
-  document.getElementById('newEqBtn')?.addEventListener('click', () => {
-    const desk = document.getElementById('desktop');
-    const dw = desk.offsetWidth, dh = desk.offsetHeight;
-    const offset = (_vizCount++ % 6) * 24;
-    new EQWidget({
-      title: 'EQ', w: 420, h: 220,
-      x: Math.round((dw - 420) / 2) + offset,
-      y: Math.round((dh - 220) / 2) + offset,
-    });
+  // ── "Mixer" button ─────────────────────────────────────────────────────────
+  document.getElementById('mixerBtn')?.addEventListener('click', () => {
+    openMixerPanel();
   });
 
   // ── "New Drum Pad" button ──────────────────────────────────────────────────

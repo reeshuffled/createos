@@ -44,7 +44,8 @@ const KNOWN_GLOBALS = new Set([
   'editImage', 'captureWindow', 'statusBar', 'registerAPI',
   'vec2', 'vec3', 'vec4',
   // Viz constructors registered in initApp
-  'AudioViz', 'SpectrogramCanvas', 'PianoRollViz', 'EQWidget',
+  'AudioViz', 'SpectrogramCanvas', 'PianoRollViz',
+  'mixer',
 ]);
 
 // Standard JS built-ins + DOM APIs + patterns OK in snippets (not createOS APIs).

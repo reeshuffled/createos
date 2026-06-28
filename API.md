@@ -304,7 +304,9 @@ audio.fft.stream(fn)                              // RAF push
 ```js
 const sg   = audio.spectrogram(source, { palette, width, height })  // → { canvas }
 const roll = audio.pianoRoll({ z, opacity, speed, midiMin, midiMax })
-const eq   = audio.eqWidget({ x, y })  // eq.low/mid/high(dB); synth.chain(eq)
+mixer.show()                           // live mixer console (ADR 032)
+  // mixer.strip('lead').volume(-6).pan(-0.3).mute().solo().eq([{freq,gain,q}])
+  // mixer.master.volume(-2); mixer.add(node, { name })
 const dp   = audio.drumpad({ title, x, y, w, h })  // 8-pad drum machine + 16-step sequencer
   // dp.bpm(128)                         // set tempo
   // dp.pattern(voiceIdx, 'x . x .')     // fill a voice row from mini-notation

@@ -671,9 +671,9 @@ audio.start();`,
         hint: "audio.pianoRoll() spawns a canvas overlay showing falling note blocks for every Instrument.play() call. opts: { z, opacity, speed (px/s), midiMin, midiMax }.",
       },
       {
-        label: "audio.eqWidget",
-        code: "const synth = audio.fm();\nconst eq = audio.eqWidget();\nsynth.chain(eq);\n// Drag sliders or call:\n// eq.low(-6).mid(3).high(-3)\n\nsetInterval(() => synth.play('A3', '4n'), 500);\naudio.start();",
-        hint: "audio.eqWidget() spawns a floating 3-band EQ panel and returns a Tone-compatible node. Chain it: synth.chain(eq). Control programmatically: eq.low(dB), eq.mid(dB), eq.high(dB).",
+        label: "mixer.show",
+        code: "const lead = audio.fm();\npat('0 3 5 7').note(audio.scale('minor')).start({ id: 'lead', inst: lead });\n\nmixer.show();\n// Or script the mix:\nmixer.strip('lead').volume(-6).pan(-0.3);\nmixer.master.volume(-2);\naudio.start();",
+        hint: "mixer.show() opens the live audio console. Every running instrument/window/mic gets a Strip (volume/pan/mute/solo + VU + 4-band EQ). Script it: mixer.strip(name).volume(dB).pan(-1..1).mute().solo().eq(bands); mixer.master.volume(dB); mixer.add(node, {name}).",
       },
       {
         label: "audio.drumpad",

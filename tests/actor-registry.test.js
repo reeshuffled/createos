@@ -49,8 +49,9 @@ vi.mock('tone', () => {
 
 vi.mock('../src/runtime/reset-registry.js', () => ({ onReset: vi.fn() }));
 vi.mock('../src/events/system-events.js',   () => ({}));
-vi.mock('./viz.js',     () => ({ AudioViz: class {}, SpectrogramCanvas: class {}, PianoRollViz: class {}, EQWidget: class {}, _noteHooks: [] }), { virtual: true });
-vi.mock('../src/api/viz.js', () => ({ AudioViz: class {}, SpectrogramCanvas: class {}, PianoRollViz: class {}, EQWidget: class {}, _noteHooks: [] }));
+vi.mock('./viz.js',     () => ({ AudioViz: class {}, SpectrogramCanvas: class {}, PianoRollViz: class {}, _noteHooks: [] }), { virtual: true });
+vi.mock('../src/api/viz.js', () => ({ AudioViz: class {}, SpectrogramCanvas: class {}, PianoRollViz: class {}, _noteHooks: [] }));
+vi.mock('../src/api/mixer.js', () => ({ acquireStrip: () => ({ input: {}, name: 'x', _autoNamed: true }), renameStrip: () => {}, mixer: {}, cleanupMixer: () => {}, serializeMixer: () => ({}), restoreMixer: () => {} }));
 vi.mock('../src/api/drumpad.js', () => ({ Drumpad: class {} }));
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

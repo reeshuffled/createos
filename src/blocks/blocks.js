@@ -142,6 +142,50 @@ Blockly.defineBlocksWithJsonArray([
     colour: 260,
   },
   {
+    type: 'mixer_show',
+    message0: 'open mixer',
+    previousStatement: null,
+    nextStatement: null,
+    colour: 260,
+    tooltip: 'Open the live audio mixer console',
+  },
+  {
+    type: 'mixer_volume',
+    message0: 'mixer: set %1 volume to %2 dB',
+    args0: [
+      { type: 'field_input', name: 'NAME', text: 'lead' },
+      { type: 'field_number', name: 'DB', value: 0, min: -48, max: 6 },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 260,
+    tooltip: 'Set a mixer strip volume (use "master" for the master strip)',
+  },
+  {
+    type: 'mixer_pan',
+    message0: 'mixer: set %1 pan to %2',
+    args0: [
+      { type: 'field_input', name: 'NAME', text: 'lead' },
+      { type: 'field_number', name: 'PAN', value: 0, min: -1, max: 1, precision: 0.05 },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 260,
+    tooltip: 'Pan a mixer strip (-1 left … 1 right)',
+  },
+  {
+    type: 'mixer_mute',
+    message0: 'mixer: %1 %2',
+    args0: [
+      { type: 'field_dropdown', name: 'STATE', options: [['mute', 'true'], ['unmute', 'false']] },
+      { type: 'field_input', name: 'NAME', text: 'lead' },
+    ],
+    previousStatement: null,
+    nextStatement: null,
+    colour: 260,
+    tooltip: 'Mute or unmute a mixer strip',
+  },
+  {
     type: 'audio_transport_start',
     message0: 'start transport',
     previousStatement: null,
@@ -1750,6 +1794,18 @@ javascriptGenerator.forBlock['audio_play'] = (b, g) => {
   return `(${synth}).play(${JSON.stringify(note)}, ${JSON.stringify(dur)});\n`;
 };
 javascriptGenerator.forBlock['audio_bpm'] = (b) => `audio.bpm(${b.getFieldValue('BPM')});\n`;
+javascriptGenerator.forBlock['mixer_show'] = () => `mixer.show();\n`;
+javascriptGenerator.forBlock['mixer_volume'] = (b) => {
+  const n = b.getFieldValue('NAME');
+  const target = n === 'master' ? 'mixer.master' : `mixer.strip('${n}')`;
+  return `${target}.volume(${b.getFieldValue('DB')});\n`;
+};
+javascriptGenerator.forBlock['mixer_pan'] = (b) => `mixer.strip('${b.getFieldValue('NAME')}').pan(${b.getFieldValue('PAN')});\n`;
+javascriptGenerator.forBlock['mixer_mute'] = (b) => {
+  const n = b.getFieldValue('NAME');
+  const target = n === 'master' ? 'mixer.master' : `mixer.strip('${n}')`;
+  return `${target}.mute(${b.getFieldValue('STATE')});\n`;
+};
 javascriptGenerator.forBlock['audio_transport_start'] = () => 'audio.start();\n';
 javascriptGenerator.forBlock['audio_volume'] = (b) => `audio.volume(${b.getFieldValue('DB')});\n`;
 javascriptGenerator.forBlock['audio_reverb'] = (b) => [`audio.reverb(${b.getFieldValue('DEC')})`, Order.FUNCTION_CALL];
@@ -2943,6 +2999,10 @@ export const TOOLBOX = {
         { kind: 'block', type: 'audio_play' },
         { kind: 'block', type: 'audio_bpm' },
         { kind: 'block', type: 'audio_transport_start' },
+        { kind: 'block', type: 'mixer_show' },
+        { kind: 'block', type: 'mixer_volume' },
+        { kind: 'block', type: 'mixer_pan' },
+        { kind: 'block', type: 'mixer_mute' },
         { kind: 'block', type: 'audio_reverb' },
         { kind: 'block', type: 'audio_delay' },
         { kind: 'block', type: 'audio_distort' },

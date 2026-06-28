@@ -1,5 +1,6 @@
 import * as Tone from "tone";
-import { AudioViz, SpectrogramCanvas, PianoRollViz, EQWidget, _noteHooks } from "./viz.js";
+import { AudioViz, SpectrogramCanvas, PianoRollViz, _noteHooks } from "./viz.js";
+import { acquireStrip, renameStrip } from "./mixer.js";
 import { Drumpad } from "./drumpad.js";
 import { Piano } from "./piano.js";
 import { onReset } from '../runtime/reset-registry.js';
@@ -458,6 +459,10 @@ export class Pattern {
     }
     if (inst !== undefined) this._inst = inst;
     this._id = id ?? `pat-${++_patIdCounter}`;
+    // ADR 032: an explicitly-named pattern names its instrument's strip.
+    if (id != null && this._inst?._strip) {
+      try { renameStrip(this._inst._strip.name, id); } catch (_) {}
+    }
     _patternRegistry.set(this._id, this);
     this._cn = 0;
     const patId = this._id;
@@ -471,7 +476,7 @@ export class Pattern {
     loop.start(0);
     this._loop = loop;
     this._live = liveOutput(this);
-    notify('pattern:started', { id: this._id });
+    notify('pattern:started', { id: this._id, strip: this._inst?._strip?.name });
     return this;
   }
 
@@ -516,8 +521,19 @@ function _midiToNote(midi) {
 // ── Instrument wrapper ────────────────────────────────────────────────────
 
 class Instrument {
-  constructor(inner) {
+  // Every instrument is eagerly routed through its own mixer Strip (the strip is
+  // the instrument's permanent output tail; ADR 032). FX added via chain() sit
+  // BEFORE the strip, so the mixer is post-FX.
+  constructor(inner, kind = 'synth') {
     this._ = track(inner);
+    this._strip = acquireStrip(null, {
+      type: 'instrument',
+      nameHint: kind,                          // → 'synth 1', 'fm 2', … (counter resets each run)
+      owner: window.__ar_active_editor_id ?? null,
+      lifecycle: 'run',
+    });
+    try { this._.connect(this._strip.input); } catch (_) {}
+    notify('instrument:created', { name: this._strip.name, kind });
   }
   play(...args) {
     this._.triggerAttackRelease(...args);
@@ -539,13 +555,17 @@ class Instrument {
     this._.volume.value = db;
     return this;
   }
+  // Manual routing override — disconnects from the strip and connects straight
+  // to the given node (user takes control; bypasses the mixer; ADR 032).
   connect(node) {
+    try { this._.disconnect(); } catch (_) {}
     this._.connect(node);
     return this;
   }
+  // FX chain ends at the strip (not destination), so mixer vol/pan/EQ is post-FX.
   chain(...nodes) {
     this._.disconnect();
-    this._.chain(...nodes, Tone.getDestination());
+    this._.chain(...nodes, this._strip.input);
     return this;
   }
 }
@@ -853,14 +873,14 @@ class AudioAPI {
   }
 
   // ── Synths ───────────────────────────────────────────────────────────────
-  synth(opts = {}) { return new Instrument(new Tone.Synth(opts).toDestination()); }
-  poly(opts = {})  { return new Instrument(new Tone.PolySynth(Tone.Synth, opts).toDestination()); }
-  fm(opts = {})    { return new Instrument(new Tone.FMSynth(opts).toDestination()); }
-  am(opts = {})    { return new Instrument(new Tone.AMSynth(opts).toDestination()); }
-  pluck(opts = {}) { return new Instrument(new Tone.PluckSynth(opts).toDestination()); }
-  metal(opts = {}) { return new Instrument(new Tone.MetalSynth(opts).toDestination()); }
-  noise(opts = {}) { return new Instrument(new Tone.NoiseSynth(opts).toDestination()); }
-  kick(opts = {})  { return new Instrument(new Tone.MembraneSynth(opts).toDestination()); }
+  synth(opts = {}) { return new Instrument(new Tone.Synth(opts), 'synth'); }
+  poly(opts = {})  { return new Instrument(new Tone.PolySynth(Tone.Synth, opts), 'poly'); }
+  fm(opts = {})    { return new Instrument(new Tone.FMSynth(opts), 'fm'); }
+  am(opts = {})    { return new Instrument(new Tone.AMSynth(opts), 'am'); }
+  pluck(opts = {}) { return new Instrument(new Tone.PluckSynth(opts), 'pluck'); }
+  metal(opts = {}) { return new Instrument(new Tone.MetalSynth(opts), 'metal'); }
+  noise(opts = {}) { return new Instrument(new Tone.NoiseSynth(opts), 'noise'); }
+  kick(opts = {})  { return new Instrument(new Tone.MembraneSynth(opts), 'kick'); }
 
   // ── Effects ──────────────────────────────────────────────────────────────
   reverb(decay = 1.5) {
@@ -922,6 +942,11 @@ class AudioAPI {
   async mic() {
     const m = track(new Tone.UserMedia());
     await m.open();
+    // Route through a 'mic' strip so live input is mixable (ADR 032).
+    try {
+      const strip = acquireStrip('mic', { type: 'mic', owner: window.__ar_active_editor_id ?? null, lifecycle: 'run' });
+      m.connect(strip.input);
+    } catch (_) {}
     return m;
   }
 
@@ -1035,9 +1060,6 @@ class AudioAPI {
     roll.start();
     return roll;
   }
-
-  // Floating 3-band EQ panel. Returns a Tone-compatible node for .chain().
-  eqWidget(opts = {}) { return new EQWidget(opts); }
 
   // 8-pad drum machine with step sequencer.
   drumpad(opts = {}) { return new Drumpad(opts); }

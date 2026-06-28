@@ -80,7 +80,11 @@ vi.mock('tone', () => {
     FeedbackDelay: vi.fn(function() { return mockNode(); }),
     PitchShift: vi.fn(function() { return mockNode(); }),
     Distortion: vi.fn(function() { return mockNode(); }),
-    Meter: vi.fn(function() { return mockNode(); }),
+    Meter: vi.fn(function() { return { ...mockNode(), connect: vi.fn(), getValue: () => -80 }; }),
+    Gain: vi.fn(function() { return { ...mockNode(), connect: vi.fn() }; }),
+    Volume: vi.fn(function() { return { ...mockNode(), volume: { value: 0 }, connect: vi.fn() }; }),
+    Channel: vi.fn(function() { return { ...mockNode(), volume: { value: 0 }, pan: { value: 0 }, mute: false, connect: vi.fn() }; }),
+    connect: vi.fn(),
     UserMedia: vi.fn(function() { return { open: vi.fn().mockResolvedValue(undefined), ...mockNode() }; }),
     Chorus: vi.fn(function() { return { ...mockNode(), start: vi.fn() }; }),
     AutoFilter: vi.fn(function() { return { ...mockNode(), start: vi.fn() }; }),
@@ -109,7 +113,7 @@ vi.mock('tone', () => {
 
 // Import after mock
 const { audio, cleanupAudio } = await import('../src/api/audio.js');
-const { _noteHooks, SpectrogramCanvas, PianoRollViz, EQWidget } = await import('../src/api/viz.js');
+const { _noteHooks, SpectrogramCanvas, PianoRollViz } = await import('../src/api/viz.js');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -275,91 +279,6 @@ describe('PianoRollViz', () => {
     for (let i = 0; i < 600; i++) hook({ note: 'C4', dur: 0.1 });
     expect(roll._notes.length).toBeLessThanOrEqual(500);
     roll._destroy();
-  });
-});
-
-// ── EQWidget ──────────────────────────────────────────────────────────────────
-
-describe('EQWidget', () => {
-  afterEach(() => cleanupAudio());
-
-  test('creates a WM window and stores winId', () => {
-    const eq = new EQWidget({ title: 'Test EQ' });
-    // In test environment wm may not be available; just verify _winId is set or null gracefully
-    if (window.wm) {
-      expect(eq._winId).toBeTruthy();
-      expect(document.getElementById(eq._winId)).not.toBeNull();
-    } else {
-      expect(eq._winId).toBeNull();
-    }
-    eq._destroy();
-  });
-
-  test('.low() sets EQ3 low band value', () => {
-    const eq = new EQWidget();
-    eq.low(-6);
-    expect(eq._eq.low.value).toBe(-6);
-    eq._destroy();
-  });
-
-  test('.mid() sets EQ3 mid band value', () => {
-    const eq = new EQWidget();
-    eq.mid(3);
-    expect(eq._eq.mid.value).toBe(3);
-    eq._destroy();
-  });
-
-  test('.high() sets EQ3 high band value', () => {
-    const eq = new EQWidget();
-    eq.high(-9);
-    expect(eq._eq.high.value).toBe(-9);
-    eq._destroy();
-  });
-
-  test('.low/.mid/.high() return this for chaining', () => {
-    const eq = new EQWidget();
-    expect(eq.low(0)).toBe(eq);
-    expect(eq.mid(0)).toBe(eq);
-    expect(eq.high(0)).toBe(eq);
-    eq._destroy();
-  });
-
-  test('.hide() and .show() toggle window display', () => {
-    const eq = new EQWidget();
-    if (!window.wm || !eq._winId) { eq._destroy(); return; }
-    const win = document.getElementById(eq._winId);
-    eq.hide();
-    expect(win.style.display).toBe('none');
-    eq.show();
-    expect(win.style.display).toBe('');
-    eq._destroy();
-  });
-
-  test('.connect() delegates to internal EQ3', () => {
-    const eq = new EQWidget();
-    const dest = {};
-    eq.connect(dest);
-    expect(eq._eq.connect).toHaveBeenCalledWith(dest);
-    eq._destroy();
-  });
-
-  test('._destroy() cleans up resources', () => {
-    const eq = new EQWidget();
-    const winId = eq._winId;
-    eq._destroy();
-    // RAF and analyser should be cleared
-    expect(eq._rafId).toBeNull();
-    expect(eq._analyser).toBeNull();
-    // Window removed (if wm available)
-    if (window.wm && winId) {
-      expect(document.getElementById(winId)).toBeNull();
-    }
-  });
-
-  test('audio.eqWidget() factory creates EQWidget', () => {
-    const eq = audio.eqWidget();
-    expect(eq).toBeInstanceOf(EQWidget);
-    eq._destroy();
   });
 });
 
