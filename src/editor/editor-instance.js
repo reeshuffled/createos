@@ -239,7 +239,7 @@ export class EditorInstance {
     this.blocklyWorkspace = null;
     this.blocksMode = false;
 
-    this._autoExec = localStorage.getItem(`vl-autoexec-${id}`) !== '0';
+    this._autoExec = localStorage.getItem(`vl-autoexec-${id}`) === '1';
     this._autoExecTimer = null;
 
     this._traceEnabled = localStorage.getItem(`vl-trace-${id}`) !== '0';
@@ -1077,6 +1077,7 @@ export class EditorInstance {
     this._listeners.forEach(({ target, type, handler, options }) =>
       target?.removeEventListener(type, handler, options));
     this._listeners = [];
+    runResetHandlers();   // release run-scoped leases/routes/shaders (camera, mic, etc.) — was leaking
     this._pausedState = null;
     this._clearTrace();
     this._setStopped();
@@ -1175,6 +1176,8 @@ export class EditorInstance {
 
     // Camera/mic are demand-driven (ADR 023): consumers acquire leases when called,
     // so no pre-run regex checks needed.
+    this._native.clearTimeout(this._autoExecTimer);
+    this._autoExecTimer = null;
 
     this.reset({ soft });
     _beginRun(); // snapshot API registry so run-scoped registerAPI() calls are reverted on reset

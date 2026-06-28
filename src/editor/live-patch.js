@@ -80,6 +80,18 @@ export function makeTraceVisitor(editorId) {
     } else if (node.type === 'ForInStatement' || node.type === 'ForOfStatement') {
       if (node.left) for (let p = node.left.range[0]; p < node.left.range[1]; p++) _forbidden.add(p);
     }
+    // Forbid injecting into non-block single-statement bodies — a trace injected
+    // before `return` in `if (x) return;` produces `if (x) trace(); return;` which
+    // makes the return unconditional, silently breaking control flow.
+    if (node.type === 'IfStatement') {
+      const forbidBody = (b) => { if (b && b.type !== 'BlockStatement') for (let p = b.range[0]; p < b.range[1]; p++) _forbidden.add(p); };
+      forbidBody(node.consequent);
+      forbidBody(node.alternate);
+    } else if (node.type === 'WhileStatement' || node.type === 'DoWhileStatement' ||
+               node.type === 'ForStatement' || node.type === 'ForInStatement' || node.type === 'ForOfStatement') {
+      if (node.body && node.body.type !== 'BlockStatement')
+        for (let p = node.body.range[0]; p < node.body.range[1]; p++) _forbidden.add(p);
+    }
     if (!_TRACE_TYPES.has(node.type) || !node.loc) return;
     _candidates.push({ pos: node.range[0], line: node.loc.start.line });
   };

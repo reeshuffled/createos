@@ -567,7 +567,9 @@ describe('signalGraph auto-population', () => {
 describe('frame-route visual chain', () => {
   it('show() delegates to pipeline.show()', () => {
     route(Source.camera).show('Test Route', { w: 700, h: 500 });
-    expect(_pipelineObj.show).toHaveBeenCalledWith('Test Route', { w: 700, h: 500 });
+    // onClose is injected so closing the output window tears down the route (releases keep-alive).
+    expect(_pipelineObj.show).toHaveBeenCalledWith('Test Route',
+      expect.objectContaining({ w: 700, h: 500, onClose: expect.any(Function) }));
   });
 
   it('stages queued before show() are added pre-start via chain methods', () => {

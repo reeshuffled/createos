@@ -6,6 +6,7 @@ import { onReset } from '../runtime/reset-registry.js';
 import { notify, registerCommand, registerSource } from '../events/index.js';
 import { acquireMicRunScoped } from './media-lease.js';
 import { readAnalyser } from './analyser-read.js';
+import { liveOutput } from '../runtime/keep-alive.js';
 
 const _nativeSetInterval = window.setInterval.bind(window);
 const _nativeClearInterval = window.clearInterval.bind(window);
@@ -114,6 +115,7 @@ function _ensureMicLeased() {
 }
 
 export function cleanupAudio() {
+  _patternRegistry.forEach(p => { try { p._live?.release(); p._live = null; } catch (_) {} });
   _patternRegistry.clear();
   _patIdCounter = 0;
   Tone.getTransport().stop();
@@ -149,7 +151,8 @@ export function cleanupAudio() {
 }
 
 export function startAudio() {
-  return Tone.start();
+  const handle = liveOutput({ _audioStarting: true });
+  return Tone.start().then(r => { handle.release(); return r; });
 }
 
 // ── Deep Strudel — Pattern algebra ────────────────────────────────────────
@@ -332,6 +335,7 @@ function _flattenPat(items, cycleNum) {
 
 function _pp(q) { return new Pattern(q); }
 
+
 function _xpNote(val, n) {
   if (!/^[A-Ga-g]/.test(val)) return val;
   try { return _midiToNote(Tone.Frequency(val).toMidi() + n); } catch (_) { return val; }
@@ -371,37 +375,39 @@ export class Pattern {
 
   // ── Transforms (return new Pattern) ─────────────────────────────────────
 
-  fast(n)  { return _pp(c => this._q(c).map(e => ({ ...e, time: e.time / n, dur: e.dur / n }))); }
+  _d(q) { const p = new Pattern(q); p._inst = this._inst; return p; }
+
+  fast(n)  { return this._d(c => this._q(c).map(e => ({ ...e, time: e.time / n, dur: e.dur / n }))); }
   slow(n)  { return this.fast(1 / n); }
   speed(n) { return this.fast(n); }
-  rev()    { return _pp(c => this._q(c).map(e => ({ ...e, time: 1 - e.time - e.dur })).sort((a, b) => a.time - b.time)); }
+  rev()    { return this._d(c => this._q(c).map(e => ({ ...e, time: 1 - e.time - e.dur })).sort((a, b) => a.time - b.time)); }
 
-  add(n)    { return _pp(c => this._q(c).map(e => ({ ...e, value: _xpNote(e.value, n) }))); }
-  gain(v)   { return _pp(c => this._q(c).map(e => ({ ...e, gain: (e.gain ?? 1) * v }))); }
-  pan(v)    { return _pp(c => this._q(c).map(e => ({ ...e, pan: v }))); }
+  add(n)    { return this._d(c => this._q(c).map(e => ({ ...e, value: _xpNote(e.value, n) }))); }
+  gain(v)   { return this._d(c => this._q(c).map(e => ({ ...e, gain: (e.gain ?? 1) * v }))); }
+  pan(v)    { return this._d(c => this._q(c).map(e => ({ ...e, pan: v }))); }
 
   note(scale) {
-    return _pp(c => this._q(c).map(e => {
+    return this._d(c => this._q(c).map(e => {
       const d = +e.value;
       return { ...e, value: !isNaN(d) ? (scale[((d % scale.length) + scale.length) % scale.length] ?? e.value) : e.value };
     }));
   }
 
   off(t, fn) {
-    return _pp(c => [
+    return this._d(c => [
       ...this._q(c),
       ...fn(this)._q(c).map(e => ({ ...e, time: (e.time + t + 1) % 1 })),
     ].sort((a, b) => a.time - b.time));
   }
 
   jux(fn) {
-    return _pp(c => [...this.pan(0)._q(c), ...fn(this).pan(1)._q(c)]);
+    return this._d(c => [...this.pan(0)._q(c), ...fn(this).pan(1)._q(c)]);
   }
 
-  every(n, fn) { return _pp(c => c % n === 0 ? fn(this)._q(c) : this._q(c)); }
+  every(n, fn) { return this._d(c => c % n === 0 ? fn(this)._q(c) : this._q(c)); }
 
   sometimesBy(p, fn) {
-    return _pp(c => {
+    return this._d(c => {
       const base = this._q(c), mod = fn(this)._q(c);
       return base.map((e, i) => Math.random() < p ? (mod[i] ?? e) : e);
     });
@@ -410,8 +416,8 @@ export class Pattern {
   often(fn)     { return this.sometimesBy(0.75, fn); }
   rarely(fn)    { return this.sometimesBy(0.25, fn); }
 
-  degrade()    { return _pp(c => this._q(c).filter(() => Math.random() > 0.5)); }
-  degradeBy(p) { return _pp(c => this._q(c).filter(() => Math.random() > p)); }
+  degrade()    { return this._d(c => this._q(c).filter(() => Math.random() > 0.5)); }
+  degradeBy(p) { return this._d(c => this._q(c).filter(() => Math.random() > p)); }
 
   // ── Learner-friendly aliases ─────────────────────────────────────────────
   reverse()         { return this.rev(); }
@@ -423,7 +429,7 @@ export class Pattern {
   volume(v)         { return this.gain(v); }
 
   euclid(k, n, rot = 0) {
-    return _pp(c => {
+    return this._d(c => {
       const gate = _euclidRhythm(k, n);
       const r = [...gate.slice(rot), ...gate.slice(0, rot)];
       const evs = this._q(c);
@@ -464,12 +470,14 @@ export class Pattern {
     }, getCyc()));
     loop.start(0);
     this._loop = loop;
+    this._live = liveOutput(this);
     notify('pattern:started', { id: this._id });
     return this;
   }
 
   stop() {
     if (this._loop) { this._loop.stop(); this._loop = null; }
+    this._live?.release(); this._live = null;
     if (this._id) _patternRegistry.delete(this._id);
     notify('pattern:stopped', { id: this._id });
     return this;
@@ -1172,7 +1180,7 @@ onReset(cleanupAudio);
 
 // Lazy speech recognition source — starts when anything subscribes to audio:word:* or audio:speech.
 registerSource(e => e.startsWith('audio:word') || e === 'audio:speech', {
-  start: () => _ensureRecognition(),
+  start: () => { _ensureRecognition(); },
   stop:  () => {
     if (_recognition) {
       _recognition.onend = null;

@@ -264,7 +264,7 @@ export function initWM(onContentResize) {
       const entry = { ..._winBaseEntry(win), _restore: win._wmRestoreHandler ?? null };
       if (spawnedIds.has(win.id)) {
         const opts = win._wmSpawnOpts;
-        if (opts && !['canvas','shader','camera'].includes(opts.type)) {
+        if (opts && !opts.transient && !['canvas','shader','camera'].includes(opts.type)) {
           entry.spawned = true;
           entry.title = win.querySelector('.wm-title')?.textContent ?? opts.title;
           entry.type  = opts.type;
@@ -365,6 +365,7 @@ export function initWM(onContentResize) {
       if (spawnedIds.has(win.id)) {
         const opts = win._wmSpawnOpts;
         if (!opts) return;
+        if (opts.transient) return;   // pipe/route run-artifact windows — recreated when code runs
         if (['canvas','shader'].includes(opts.type)) return;
         const isBlobSrc = opts.src?.startsWith('blob:');
         entry.spawned = true;
@@ -1285,6 +1286,37 @@ export function initWM(onContentResize) {
     if (win) { _pushHistory(); _minimizeToTaskbar(win); }
   });
 
+  // Full teardown + DOM removal of a spawned window. Used by the close button and
+  // by programmatic api.remove() (e.g. pipeline/route closing the window it spawned on reset).
+  // animate=false removes synchronously (no wm-closing transition) — for reset paths.
+  function _destroyWin(win, { animate = true } = {}) {
+    if (!win || !spawnedIds.has(win.id)) return false;
+    _releaseWin(win);
+    win._wmCleanup?.();
+    win._wmRescueContent?.();
+    _disposeChannel(win.id);
+    _deleteWinHandle(win.id);
+    spawnedIds.delete(win.id);
+    const _onClose = win._wmUserOnClose;
+    const _closedTitle = win.querySelector('.wm-title')?.textContent?.trim() ?? '';
+    const _closedType  = win._wmSpawnOpts?.type ?? 'unknown';
+    const _closedId    = win.id;
+    // If this window was focused, blur it before removal.
+    if (_closedId === _focusedWinId) { _focusedWinId = null; notify('wm:blur', { id: _closedId }); }
+    const finalize = () => {
+      win.remove();
+      _onClose?.();
+      notify('wm:close', { id: _closedId, title: _closedTitle, type: _closedType });
+    };
+    if (animate) {
+      win.classList.add('wm-closing');
+      win.addEventListener('animationend', finalize, { once: true });
+    } else {
+      finalize();
+    }
+    return true;
+  }
+
   // Close button — supports custom _wmOnClose handler (e.g. editor)
   desktop.addEventListener('click', e => {
     if (!e.target.classList.contains('wm-close')) return;
@@ -1295,26 +1327,7 @@ export function initWM(onContentResize) {
       _saveState();
       return;
     }
-    if (spawnedIds.has(win.id)) {
-      _releaseWin(win);
-      win._wmCleanup?.();
-      win._wmRescueContent?.();
-      _disposeChannel(win.id);
-      _deleteWinHandle(win.id);
-      spawnedIds.delete(win.id);
-      const _onClose = win._wmUserOnClose;
-      const _closedTitle = win.querySelector('.wm-title')?.textContent?.trim() ?? '';
-      const _closedType  = win._wmSpawnOpts?.type ?? 'unknown';
-      const _closedId    = win.id;
-      // If this window was focused, blur it before removal.
-      if (_closedId === _focusedWinId) { _focusedWinId = null; notify('wm:blur', { id: _closedId }); }
-      win.classList.add('wm-closing');
-      win.addEventListener('animationend', () => {
-        win.remove();
-        _onClose?.();
-        notify('wm:close', { id: _closedId, title: _closedTitle, type: _closedType });
-      }, { once: true });
-    } else {
+    if (!_destroyWin(win)) {
       win.style.display = 'none';
       notify('wm:hide', { id: win.id });
     }
@@ -2079,6 +2092,9 @@ export function initWM(onContentResize) {
     /** Alias for hide */
     close(id) { api.hide(id); return api; },
 
+    /** Permanently tear down a spawned window and remove it from the DOM (no-op if not spawned). */
+    remove(id, opts = {}) { _destroyWin(getWin(id), opts); return api; },
+
     /** Undo last destructive window operation */
     undo() { _undoHistory(); return api; },
 
@@ -2265,6 +2281,25 @@ export function initWM(onContentResize) {
     },
 
     /**
+     * Current inner bounds of a window's body, in canvas px.
+     * Re-read each call so it tracks live resizes. Returns null if no window.
+     * @param {string} id — window id
+     * @returns {{w:number, h:number, left:number, top:number} | null}
+     */
+    bounds(id) {
+      const win = getWin(id);
+      if (!win) return null;
+      const body = win.querySelector('.wm-body');
+      if (!body) return null;
+      return {
+        w:    body.clientWidth  || 0,
+        h:    body.clientHeight || 0,
+        left: body.clientLeft   || 0,
+        top:  body.clientTop    || 0,
+      };
+    },
+
+    /**
      * Place a persistent text object on top of any visual window.
      * Returns a handle: { id, setText, setStyle, moveTo, remove, on }
      * handle.on supports: 'move' | 'edit' | 'select' | 'deselect'
@@ -2287,6 +2322,11 @@ export function initWM(onContentResize) {
         _textLayers.add(tl);
         win._ensureTextLayer = () => tl;
         win._getTextCanvas   = () => tl.canvas;
+        // Track live window resize so the mirror canvas (snapshot/record) stays full-size.
+        const ro = new ResizeObserver(() => tl.updateRect(0, 0, body.clientWidth || 400, body.clientHeight || 300));
+        ro.observe(body);
+        const prevClose = win._wmCleanup;
+        win._wmCleanup = () => { ro.disconnect(); prevClose?.(); };
       }
       const handle = win._ensureTextLayer().addText(text, x, y, opts, { runScoped: true });
       if (!handle) return null;
@@ -2334,7 +2374,11 @@ export function initWM(onContentResize) {
      */
     spawn(title, opts = {}) {
       const dw = desktop.offsetWidth, dh = desktop.offsetHeight;
-      const id  = opts.id || `win-spawn-${++spawnCounter}`;
+      let id = opts.id || `win-spawn-${++spawnCounter}`;
+      // Generated ids must not collide with windows restored from a project/localStorage
+      // (spawnCounter resets to 0 on reload, but restored win-spawn-N persist in the DOM).
+      // Duplicate ids break getElementById lookups (wm.addText/bounds/etc). Bump past any clash.
+      if (!opts.id) { while (document.getElementById(id)) id = `win-spawn-${++spawnCounter}`; }
       const w   = opts.w  ?? 320;
       const h   = opts.h  ?? 240;
       const x   = opts.x  ?? Math.round((dw - w) / 2);

@@ -853,6 +853,8 @@ Port **survives resets** — connect once, keep across code runs. `serial:discon
 ```js
 wm.show(id) / wm.hide(id) / wm.toggle(id) / wm.focus(id)
 wm.maximize(id) / wm.restore(id) / wm.close(id)
+wm.remove(id, opts?)   // permanently destroy a spawned window + remove from DOM (close(id) only hides)
+                       // opts.animate:false → synchronous (no close transition). No-op if not a spawned window.
 wm.move(id, x, y) / wm.resize(id, w, h)
 wm.setZ(id, z)          // live CSS z-index update
 wm.setOpacity(id, v)    // live CSS opacity (0–1)
@@ -887,6 +889,11 @@ wm.addText(id, text, x, y, opts?)  // → handle | null
 // handle: { id, setText(s), setStyle(opts), moveTo(x,y), remove(), cancelAnimate(), on(ev,fn) }
 // Auto-grafts TextLayer onto any window type (pipe/route-spawned windows included).
 // Run-scoped — cleared on reset.
+
+wm.bounds(id)   // → { w, h, left, top } | null
+// Live inner size of a window's body, in canvas px. Re-read each call so it tracks resizes.
+// Pair with wm.addText to keep spawned text on-screen after the window is resized, e.g.:
+//   const b = wm.bounds(winId); wm.addText(winId, word, Math.random()*b.w, Math.random()*b.h)
 
 wm.pickFile(key, pickerOpts?)   // async → blob URL (cached by key, re-prompts once)
 

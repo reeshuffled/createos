@@ -582,7 +582,9 @@ class Route {
       this._timelineParts = [];
     }
 
-    this._pipeline.show(title, opts);
+    // Closing the output window must tear down the whole route (release its keep-alive
+    // + unsubscribe taps), else the editor idle watcher stays "running" after close.
+    this._pipeline.show(title, { ...opts, onClose: () => this._destroy() });
 
     if (this._timelineParts.length > 0) {
       this._runTimeline();

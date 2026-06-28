@@ -842,13 +842,16 @@ export class Pipeline {
       w: opts.w ?? 700,
       h: opts.h ?? 500,
       html: '',
-      onClose: () => this.stop(),
+      transient: true,   // run artifact — don't serialize/restore (empties orphan on refresh)
+      // Chain caller's onClose (e.g. route._destroy to release its keep-alive) before stop().
+      onClose: () => { opts.onClose?.(); this.stop(); },
       ...(opts.noChrome    !== undefined ? { noChrome:    opts.noChrome    } : {}),
       ...(opts.transparent !== undefined ? { transparent: opts.transparent } : {}),
     });
 
     if (winId) {
       this.winId = winId;
+      this._ownWinId = winId;   // window we spawned — close it on _destroy (reset), else it orphans
       const winEl = document.getElementById(winId);
       const body  = winEl?.querySelector('.wm-body');
       if (body) {
@@ -986,6 +989,12 @@ export class Pipeline {
     }
     this._displayCanvas = null;
     this._displayCtx    = null;
+    // Close the window we spawned so it doesn't orphan across reset/re-run.
+    if (this._ownWinId) {
+      const id = this._ownWinId;
+      this._ownWinId = null;
+      window.wm?.remove?.(id, { animate: false });
+    }
   }
 }
 
