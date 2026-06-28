@@ -12,6 +12,7 @@ vi.stubGlobal('__ar_notify', (event, data) => {
 vi.mock('../src/events/index.js', () => ({
   notify:          (event, data) => { (_subscribers.get(event) ?? []).forEach(fn => fn(data)); },
   registerCommand: (event, fn)   => { _commands.set(event, fn); },
+  registerSource:  vi.fn(),
   emit:            (event, data) => {
     if (_commands.has(event)) { _commands.get(event)(data ?? {}); return; }
     (_subscribers.get(event) ?? []).forEach(fn => fn(data));

@@ -3,7 +3,7 @@ import { AudioViz, SpectrogramCanvas, PianoRollViz, EQWidget, _noteHooks } from 
 import { Drumpad } from "./drumpad.js";
 import { Piano } from "./piano.js";
 import { onReset } from '../runtime/reset-registry.js';
-import { notify, registerCommand } from '../events/index.js';
+import { notify, registerCommand, registerSource } from '../events/index.js';
 import { acquireMicRunScoped } from './media-lease.js';
 import { readAnalyser } from './analyser-read.js';
 
@@ -1169,6 +1169,18 @@ export const audio = new AudioAPI();
 
 // Register teardown with the reset registry (ADR 008).
 onReset(cleanupAudio);
+
+// Lazy speech recognition source — starts when anything subscribes to audio:word:* or audio:speech.
+registerSource(e => e.startsWith('audio:word') || e === 'audio:speech', {
+  start: () => _ensureRecognition(),
+  stop:  () => {
+    if (_recognition) {
+      _recognition.onend = null;
+      try { _recognition.stop(); } catch (_) {}
+      _recognition = null;
+    }
+  },
+});
 
 // ── Event bus command handlers ─────────────────────────────────────────────
 registerCommand('audio:start',      ({ bpm } = {}) => { if (bpm !== undefined) audio.bpm(bpm); audio.start(); });

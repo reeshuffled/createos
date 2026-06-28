@@ -1155,7 +1155,13 @@ export function initWM(onContentResize) {
     tb.insertBefore(btn, firstBtn);
   }
 
-  function getWin(id) { return document.getElementById(id); }
+  function getWin(id) {
+    const eid = window.__ar_active_editor_id ?? 1;
+    if (id === 'win-canvas')  id = `win-canvas-${eid}`;
+    if (id === 'win-editor')  id = `win-editor-${eid}`;
+    if (id === 'win-console') id = `win-console-${eid}`;
+    return document.getElementById(id);
+  }
 
   function bringToFront(win) {
     win.style.zIndex = String(zTop++);
