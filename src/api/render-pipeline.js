@@ -703,6 +703,10 @@ export class Pipeline {
     this._sentinel      = {};        // object held in __ar_keepAlive
     this._displayCanvas = null;      // canvas shown to user (for canvas-terminal sinks)
     this._displayCtx    = null;
+    // Owner editor — set when constructed during a run. Lets cleanup tear down
+    // only this editor's pipelines so running one editor doesn't kill another's
+    // live output (routes delegate to pipe internally — same scoping applies).
+    this._ownerEditorId = window.__ar_active_editor_id;
     _pipelines.push(this);
   }
 
@@ -1148,10 +1152,22 @@ pipe.register = function(name, factory, descriptor = {}) {
 
 // ── Cleanup (called on every reset via editor-instance.js) ───────────────────
 
-export function cleanupPipelines() {
-  for (const p of _pipelines) p._destroy();
+export function cleanupPipelines(editorId) {
+  // Scope teardown to the resetting editor so a pipeline spawned by editor A
+  // survives editor B re-running. editorId == null → full global reset.
+  // Each pipeline's _destroy() removes its own stages from _stageRegistry, so a
+  // scoped reset leaves the surviving editor's stage entries intact.
+  const survivors = [];
+  for (const p of _pipelines) {
+    if (editorId == null || p._ownerEditorId == null || p._ownerEditorId === editorId) {
+      p._destroy();
+    } else {
+      survivors.push(p);
+    }
+  }
   _pipelines.length = 0;
-  _stageRegistry.clear();
+  _pipelines.push(...survivors);
+  if (editorId == null) _stageRegistry.clear();
 }
 
 // ── Event bus command handlers ────────────────────────────────────────────────
@@ -1174,4 +1190,4 @@ registerCommand('pipe:stage:set-uniform', ({ stageId, name, value }) => {
 });
 
 // Register teardown with the reset registry (ADR 008).
-onReset(cleanupPipelines);
+onReset(cleanupPipelines);   // receives editorId — scopes teardown per editor

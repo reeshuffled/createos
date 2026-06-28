@@ -218,6 +218,11 @@ class Route {
     this._looping     = false;
     this._timeoutId   = null;
 
+    // Owner editor — set when constructed during a run (app.js tags it before
+    // user code executes). Lets the reset handler tear down only this editor's
+    // routes, so running one editor doesn't kill another's live output.
+    this._ownerEditorId = window.__ar_active_editor_id;
+
     _routes.add(this);
   }
 
@@ -735,7 +740,14 @@ export function route(source) {
 }
 
 // ── Reset cleanup (ADR 008) ───────────────────────────────────────────────────
-onReset(() => {
-  for (const r of _routes) r._destroy();
-  _routes.clear();
+onReset((editorId) => {
+  // Scope teardown to the resetting editor so a route spawned by editor A
+  // survives editor B re-running. editorId == null → full global reset
+  // (no editor context; tests / hard global teardown).
+  for (const r of _routes) {
+    if (editorId == null || r._ownerEditorId == null || r._ownerEditorId === editorId) {
+      r._destroy();
+      _routes.delete(r);
+    }
+  }
 });

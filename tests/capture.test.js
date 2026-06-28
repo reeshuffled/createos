@@ -239,4 +239,49 @@ describe('CameraStream capture methods', () => {
     rec.stop();
     cam.stop();
   });
+
+  it('two opens of the same device share ONE stream (single getUserMedia)', async () => {
+    const stream = makeMediaStream('camS');
+    Object.defineProperty(HTMLVideoElement.prototype, 'readyState', { get() { return 1; }, configurable: true });
+    let gumCalls = 0;
+    global.navigator.mediaDevices = {
+      enumerateDevices: async () => [{ kind: 'videoinput', deviceId: 'camS' }],
+      getUserMedia: async () => { gumCalls++; return stream; },
+    };
+    const { Camera } = await import('../src/api/camera.js');
+    const a = await Camera.open({ deviceId: 'camS' });
+    const b = await Camera.open({ deviceId: 'camS' });
+    expect(gumCalls).toBe(1);              // one underlying stream
+    expect(a.element).toBe(b.element);     // same <video> element
+    expect(a._stream).toBe(b._stream);     // same MediaStream
+    a.stop(); b.stop();
+  });
+
+  it('scoped reset keeps another editor\'s camera alive; last release stops tracks', async () => {
+    const stopped = [];
+    const stream = {
+      getVideoTracks: () => [{ getSettings: () => ({ deviceId: 'camT' }) }],
+      getTracks: () => [{ stop: () => stopped.push('track') }],
+    };
+    Object.defineProperty(HTMLVideoElement.prototype, 'readyState', { get() { return 1; }, configurable: true });
+    global.navigator.mediaDevices = {
+      enumerateDevices: async () => [{ kind: 'videoinput', deviceId: 'camT' }],
+      getUserMedia: async () => stream,
+    };
+    const { Camera, cleanupCameras } = await import('../src/api/camera.js');
+
+    const prev = window.__ar_active_editor_id;
+    window.__ar_active_editor_id = 1;
+    const a = await Camera.open({ deviceId: 'camT' });   // editor 1
+    window.__ar_active_editor_id = 2;
+    const b = await Camera.open({ deviceId: 'camT' });   // editor 2, shares stream
+    window.__ar_active_editor_id = prev;
+
+    cleanupCameras(2);                       // editor 2 resets
+    expect(stopped).toEqual([]);             // stream still alive (editor 1 holds it)
+    expect(a._stream).toBe(stream);          // editor 1's handle still reads it
+
+    cleanupCameras(1);                       // editor 1 resets → last holder
+    expect(stopped).toEqual(['track']);      // now the track stops
+  });
 });

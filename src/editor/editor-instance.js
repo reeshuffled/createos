@@ -1077,7 +1077,7 @@ export class EditorInstance {
     this._listeners.forEach(({ target, type, handler, options }) =>
       target?.removeEventListener(type, handler, options));
     this._listeners = [];
-    runResetHandlers();   // release run-scoped leases/routes/shaders (camera, mic, etc.) — was leaking
+    runResetHandlers(this.id);   // release run-scoped leases/routes/shaders (camera, mic, etc.) — scoped to this editor
     this._pausedState = null;
     this._clearTrace();
     this._setStopped();
@@ -1118,7 +1118,7 @@ export class EditorInstance {
     for (const id of this._timeouts.keys()) this._native.clearTimeout(id);
     this._intervals.clear();
     this._timeouts.clear();
-    runResetHandlers();   // every subsystem's cleanup, registered via onReset (ADR 008)
+    runResetHandlers(this.id);   // every subsystem's cleanup, registered via onReset (ADR 008) — scoped to this editor
     if (!soft) {
       this._keepAlive = new Set();
       this._hadOutput = false;

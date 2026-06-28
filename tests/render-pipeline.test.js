@@ -314,6 +314,35 @@ describe('cleanupPipelines()', () => {
     cleanupPipelines();
     expect(removeSpy).toHaveBeenCalled();
   });
+
+  it('scoped reset only destroys the resetting editor\'s pipelines', () => {
+    const prev = window.__ar_active_editor_id;
+    const { canvas: c1 } = makeCanvas();
+    const { canvas: c2 } = makeCanvas();
+    window.__ar_active_editor_id = 1;
+    const p1 = pipe(c1).start();   // editor 1
+    window.__ar_active_editor_id = 2;
+    const p2 = pipe(c2).start();   // editor 2
+    window.__ar_active_editor_id = prev;
+
+    cleanupPipelines(2);            // editor 2 resets
+    expect(window.__ar_keepAlive.size).toBe(1);  // editor 1's pipeline survives
+    expect(p1._rafId).not.toBeNull();
+    expect(p2._rafId).toBeNull();
+  });
+
+  it('global reset (no editorId) destroys every pipeline', () => {
+    const { canvas: c1 } = makeCanvas();
+    const { canvas: c2 } = makeCanvas();
+    window.__ar_active_editor_id = 1;
+    pipe(c1).start();
+    window.__ar_active_editor_id = 2;
+    pipe(c2).start();
+    window.__ar_active_editor_id = undefined;
+
+    cleanupPipelines();
+    expect(window.__ar_keepAlive.size).toBe(0);
+  });
 });
 
 // ── PixelateStage ─────────────────────────────────────────────────────────────

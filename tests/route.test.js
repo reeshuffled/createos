@@ -523,6 +523,32 @@ describe('lifecycle', () => {
     expect(getLiveRoutes().size).toBe(0);
   });
 
+  it('onReset(editorId) only destroys routes owned by that editor', () => {
+    const prev = window.__ar_active_editor_id;
+    window.__ar_active_editor_id = 1;
+    const rA = route(() => 0).to(v => v);   // owned by editor 1
+    window.__ar_active_editor_id = 2;
+    const rB = route(() => 1).to(v => v);   // owned by editor 2
+    window.__ar_active_editor_id = prev;
+
+    _onResetCb?.(2);                         // editor 2 resets
+    expect(rB._destroyed).toBe(true);        // its own route torn down
+    expect(rA._destroyed).toBe(false);       // editor 1's route survives
+    expect(getLiveRoutes().has(rA)).toBe(true);
+    expect(getLiveRoutes().has(rB)).toBe(false);
+  });
+
+  it('onReset() with no editorId still clears everything (global reset)', () => {
+    window.__ar_active_editor_id = 1;
+    const rA = route(() => 0).to(v => v);
+    window.__ar_active_editor_id = 2;
+    const rB = route(() => 1).to(v => v);
+    window.__ar_active_editor_id = undefined;
+
+    _onResetCb?.();                          // no id → full teardown
+    expect(getLiveRoutes().size).toBe(0);
+  });
+
   it('_destroy() is idempotent', () => {
     const r = route(() => 0).to(v => v);
     expect(() => { r._destroy(); r._destroy(); }).not.toThrow();

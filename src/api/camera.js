@@ -4,25 +4,85 @@ import { recordStream } from './recorder.js';
 import { initCameraLease } from './media-lease.js';
 // ── Multi-camera API ─────────────────────────────────────────────────────────
 
+// Open handles (one per Camera.open() call). Each is tagged with the editor that
+// opened it so a reset of editor B does not stop editor A's camera (ADR 008 reset
+// scoping). Multiple handles for the same device share ONE underlying stream.
 const _openCameras = [];
 
-export function cleanupCameras() {
-  for (const c of _openCameras) c._release();
-  _openCameras.length = 0;
-}
+// Shared underlying camera sources, keyed by resolved deviceId (or `index:N` when
+// no id is known). Two consumers on Source.camera get the SAME getUserMedia stream
+// + <video> element via refcount — one decode, no device contention. The stream is
+// stopped only when the last handle releases.
+const _sharedSources = new Map();   // key → CameraSource
+const _pendingSources = new Map();  // key → Promise<CameraSource> (open in flight)
 
-class CameraStream {
-  constructor(stream) {
-    this._stream = stream;
-    this._flipped = false;
-    this._deviceId = stream.getVideoTracks()[0]?.getSettings?.().deviceId ?? null;
+class CameraSource {
+  constructor(key, stream) {
+    this.key = key;
+    this.stream = stream;
+    this.refs = 0;
+    this.deviceId = stream.getVideoTracks()[0]?.getSettings?.().deviceId ?? null;
     this.element = document.createElement('video');
     this.element.autoplay = true;
     this.element.playsInline = true;
     this.element.muted = true;
     this.element.srcObject = stream;
+  }
+  acquire() { this.refs++; }
+  release() {
+    this.refs = Math.max(0, this.refs - 1);
+    if (this.refs > 0) return;
+    this.stream?.getTracks().forEach(t => t.stop());
+    this.element.srcObject = null;
+    _sharedSources.delete(this.key);
+    if (this.deviceId) notify('camera:close', { deviceId: this.deviceId });
+  }
+}
+
+// Resolve (or create) the shared source for a key. Concurrent opens for the same
+// key await the same in-flight getUserMedia rather than opening a second stream.
+async function _getSharedSource(key, constraints, id) {
+  const existing = _sharedSources.get(key);
+  if (existing) return existing;
+  if (_pendingSources.has(key)) return _pendingSources.get(key);
+  const p = (async () => {
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia(constraints); }
+    catch (err) {
+      notify('camera:error', { deviceId: id, error: err?.message ?? String(err) });
+      throw err;
+    }
+    const src = new CameraSource(key, stream);
+    _sharedSources.set(key, src);
+    return src;
+  })();
+  _pendingSources.set(key, p);
+  try { return await p; }
+  finally { _pendingSources.delete(key); }
+}
+
+export function cleanupCameras(editorId) {
+  // Scope to the resetting editor so a camera held by another editor's still-live
+  // output keeps streaming. editorId == null → full release (global / hard reset).
+  // Iterate a copy: _release() splices itself out of _openCameras.
+  for (const c of [..._openCameras]) {
+    if (editorId == null || c._ownerEditorId == null || c._ownerEditorId === editorId) c._release();
+  }
+}
+
+class CameraStream {
+  constructor(source, ownerEditorId) {
+    this._source = source;
+    this._flipped = false;
+    this._released = false;
+    this._ownerEditorId = ownerEditorId;
+    source.acquire();
     _openCameras.push(this);
   }
+
+  get element()  { return this._source.element; }
+  get _stream()  { return this._source.stream; }
+  get _deviceId() { return this._source.deviceId; }
 
   /** Mirror the video feed horizontally */
   flip(state = true) {
@@ -58,18 +118,19 @@ class CameraStream {
   }
 
   _release() {
-    const deviceId = this._deviceId;
-    this._stream?.getTracks().forEach(t => t.stop());
-    this._stream = null;
-    this.element.srcObject = null;
+    if (this._released) return;
+    this._released = true;
     const i = _openCameras.indexOf(this);
     if (i >= 0) _openCameras.splice(i, 1);
-    if (deviceId) notify('camera:close', { deviceId });
+    this._source.release();   // stops tracks only when last handle releases
   }
 }
 
 export const Camera = {
   async open({ index = 0, deviceId = null } = {}) {
+    // Capture owner now: open() awaits, and __ar_active_editor_id may change before
+    // the handle is constructed. The handle must be tagged with the editor that asked.
+    const ownerEditorId = window.__ar_active_editor_id;
     let id = deviceId;
     if (!id) {
       const all = await navigator.mediaDevices.enumerateDevices();
@@ -81,13 +142,9 @@ export const Camera = {
         ? { deviceId: { exact: id }, width: { ideal: 1920 }, height: { ideal: 1080 } }
         : { width: { ideal: 1920 }, height: { ideal: 1080 } },
     };
-    let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia(constraints); }
-    catch (err) {
-      notify('camera:error', { deviceId: id, error: err?.message ?? String(err) });
-      throw err;
-    }
-    const cam = new CameraStream(stream);
+    const key = id ?? `index:${index}`;
+    const source = await _getSharedSource(key, constraints, id);
+    const cam = new CameraStream(source, ownerEditorId);
     // Wait for video metadata so width/height are available
     await new Promise(resolve => {
       if (cam.element.readyState >= 1) { resolve(); return; }

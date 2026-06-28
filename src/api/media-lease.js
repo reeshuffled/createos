@@ -20,8 +20,10 @@ let _cameraStart = null, _cameraStop = null;
 let _micStart    = null, _micStop    = null;
 let _cameraCount = 0,    _micCount   = 0;
 
-// Run-scoped leases released on every reset.
-const _runScopedLeases = [];
+// Run-scoped leases released on reset. Each entry is tagged with the editor that
+// acquired it so a reset of editor B does not release editor A's camera/mic lease
+// (which would drop the refcount to 0 and stop a stream another editor still uses).
+const _runScopedLeases = [];   // [{ handle, editorId }]
 
 // ── Registration (called by camera.js / mic.js at init time) ─────────────────
 
@@ -70,14 +72,14 @@ export function acquireMic() {
  */
 export function acquireCameraRunScoped() {
   const h = acquireCamera();
-  _runScopedLeases.push(h);
+  _runScopedLeases.push({ handle: h, editorId: window.__ar_active_editor_id });
   return h;
 }
 
 /** Acquire the toolbar mic for a user-code consumer. Auto-released on reset. */
 export function acquireMicRunScoped() {
   const h = acquireMic();
-  _runScopedLeases.push(h);
+  _runScopedLeases.push({ handle: h, editorId: window.__ar_active_editor_id });
   return h;
 }
 
@@ -88,8 +90,15 @@ export function getMicCount()    { return _micCount; }
 
 // ── Reset handler ─────────────────────────────────────────────────────────────
 
-function _cleanupRunScoped() {
-  for (const l of _runScopedLeases) l.release();
+function _cleanupRunScoped(editorId) {
+  // Scope to the resetting editor so a lease held by another editor's still-live
+  // output survives. editorId == null → full release (global / hard reset).
+  const survivors = [];
+  for (const l of _runScopedLeases) {
+    if (editorId == null || l.editorId == null || l.editorId === editorId) l.handle.release();
+    else survivors.push(l);
+  }
   _runScopedLeases.length = 0;
+  _runScopedLeases.push(...survivors);
 }
 onReset(_cleanupRunScoped);

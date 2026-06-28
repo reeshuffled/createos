@@ -15,9 +15,14 @@ export function onReset(fn) {
 
 // Run every registered handler. One throwing handler must not abort the rest —
 // a leaked subsystem is bad, but a half-finished reset is worse.
-export function runResetHandlers() {
+//
+// editorId (optional): the id of the editor instance being reset. Handlers that
+// track per-editor outputs (e.g. route.js) use it to tear down only their own
+// editor's artifacts, so running one editor does not kill another editor's live
+// outputs. When omitted (undefined), handlers fall back to a full global reset.
+export function runResetHandlers(editorId) {
   for (const fn of _handlers) {
-    try { fn(); }
+    try { fn(editorId); }
     catch (e) { console.error('[reset] handler failed:', e); }
   }
 }
