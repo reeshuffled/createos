@@ -33,6 +33,40 @@ export function unregisterMidiInstrument(widget) {
 
 export function getMidiTarget() { return _target; }
 
+// ── Chip wiring (shared by every instrument widget) ─────────────────────────────
+// The 🎹 chip appearance per target/idle/dormant state was duplicated byte-for-byte
+// across piano.js and drumpad.js bar the tooltip strings. One impl now; the widget
+// supplies the chip element (its own button factory) and the per-instrument tooltips.
+
+const CHIP_STYLES = {
+  target:  { color: '#a6e3a1', borderColor: '#a6e3a1', opacity: '1',    boxShadow: '0 0 6px #a6e3a155' },
+  idle:    { color: '#6c7086', borderColor: '#313244', opacity: '0.7',  boxShadow: '' },
+  dormant: { color: '#45475a', borderColor: '#313244', opacity: '0.55', boxShadow: '' },
+};
+
+/**
+ * Install MIDI-chip behaviour on an instrument widget: defines widget._setMidiChip
+ * (appearance for 'target' | 'idle' | 'dormant'), paints the initial dormant state,
+ * and wires the chip click as the opt-in permission gesture. The widget still builds
+ * the chip element and still calls registerMidiInstrument/notifyMidiFocus(this) once
+ * its _winId exists and unregisterMidiInstrument(this) on destroy.
+ * @param {object} widget
+ * @param {{ chip: HTMLElement, tooltips: { target:string, idle:string, dormant:string } }} opts
+ */
+export function wireMidiInstrument(widget, { chip, tooltips }) {
+  widget._midiChip = chip;
+  widget._setMidiChip = (state) => {
+    const s = CHIP_STYLES[state] || CHIP_STYLES.dormant;
+    chip.style.color = s.color;
+    chip.style.borderColor = s.borderColor;
+    chip.style.opacity = s.opacity;
+    chip.style.boxShadow = s.boxShadow;
+    chip.title = tooltips[state] || tooltips.dormant;
+  };
+  widget._setMidiChip('dormant');
+  chip.addEventListener('click', () => enableMidiFor(widget));
+}
+
 function _midiOpen() { return !!midi._access; }
 
 /** Re-paint every registered instrument's chip from current open/target state. */

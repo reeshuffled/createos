@@ -9,12 +9,11 @@
 // liveOutput keep-alive while playing so the run stays alive. Modeled on
 // route.js `_runTimeline`.
 //
-// Clocks are run-scoped: tagged with the active editor id at construction and
-// stopped by cleanupReplayClocks() on reset (only matching-owner clocks, so
-// resetting editor B does not kill editor A's replay — same rule as route.js).
+// Clocks are run-scoped OUTPUTS: owner-scoped teardown + keep-alive are owned by
+// runScopedOutput (run-scoped.js) — a reset disposes only matching-owner clocks, so
+// resetting editor B does not kill editor A's replay.
 
-import { onReset } from '../runtime/reset-registry.js';
-import { liveOutput } from '../runtime/keep-alive.js';
+import { runScopedOutput } from '../runtime/run-scoped.js';
 
 const _clocks = new Set();
 
@@ -36,16 +35,16 @@ class ReplayClock {
     this._loop   = loop;
     this._label  = label;
     this._timers = [];
-    this._live   = null;
+    this._h      = null;
     this._destroyed = false;
-    this._ownerEditorId = window.__ar_active_editor_id ?? null;
     this._duration = this._ops.length ? this._ops[this._ops.length - 1].at : 0;
   }
 
   start() {
     if (this._destroyed) return this;
     _clocks.add(this);
-    this._live = liveOutput(this);
+    // token `this` so the Signal Graph labels it "ReplayClock". onStop = full teardown.
+    this._h = runScopedOutput({ token: this, onStop: () => this._teardown() });
     this._scheduleCycle();
     return this;
   }
@@ -72,25 +71,18 @@ class ReplayClock {
     this._timers.push(endId);
   }
 
-  stop() {
+  // Both stop triggers — the end-of-take marker / external .stop(), and the global
+  // reset — funnel through the handle's idempotent dispose() → onStop → _teardown.
+  stop() { this._h?.dispose(); if (!this._h) this._teardown(); }
+
+  _teardown() {
     if (this._destroyed) return;
     this._destroyed = true;
     for (const id of this._timers) window.clearTimeout(id);
     this._timers = [];
-    this._live?.release();
-    this._live = null;
     _clocks.delete(this);
   }
 }
 
 // Test/inspection helper.
 export function _activeReplayCount() { return _clocks.size; }
-
-function cleanupReplayClocks(editorId) {
-  for (const c of [..._clocks]) {
-    if (editorId == null || c._ownerEditorId == null || c._ownerEditorId === editorId) {
-      c.stop();
-    }
-  }
-}
-onReset(cleanupReplayClocks);

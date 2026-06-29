@@ -3,6 +3,16 @@
 import { StateField } from '@codemirror/state';
 import { showTooltip } from '@codemirror/view';
 import esprima from 'esprima';
+import { deriveParamHints } from '../runtime/api-registry.js';
+
+// Resolve a call path's params: the manual PARAM_HINTS table first, then the
+// single source — param signatures carried on each API's descriptor (CONTEXT.md
+// "API Descriptor"). Manual wins for un-migrated APIs; migrated APIs live only in
+// their descriptor. Derivation is live (per lookup) so run-scoped registerAPI()
+// signatures appear without an import-time snapshot.
+export function resolveParamHint(path) {
+  return PARAM_HINTS[path] ?? deriveParamHints()[path] ?? null;
+}
 
 // ── Param tables ──────────────────────────────────────────────────────────────
 
@@ -28,8 +38,7 @@ export const PARAM_HINTS = {
   'Shader':             ['fragmentBody', 'opts?'],
   'GLShader':           ['fragmentBody', 'opts?'],
   'ShaderFX':           ['fragmentBody', 'opts?'],
-  // PIXI
-  'pixi.tick':          ['fn'],
+  // PIXI — 'pixi.tick' migrated to pixi's API Descriptor (app.js); resolves via deriveParamHints()
   // Input / Events (ADR 014 — sensors replaced by bus)
   'on':                 ['event'],
   'tick':               ['ms'],
@@ -157,7 +166,7 @@ function computeTooltip(state) {
   const match = findCallAtCursor(ast, cursor);
   if (!match) return null;
 
-  const params = PARAM_HINTS[match.path];
+  const params = resolveParamHint(match.path);
   if (!params) return null;
 
   const idx = Math.min(match.argIdx, params.length - 1);

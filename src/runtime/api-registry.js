@@ -10,8 +10,10 @@
 // run). Their registrations are captured in the snapshot and survive across runs.
 // User code calling registerAPI() during a run is rolled back on reset().
 
-const _registry  = new Map();   // name → impl (live)
-let   _runBaseline = null;       // snapshot taken at _beginRun(); restored at _endRun()
+const _registry    = new Map();   // name → impl (live)
+const _descriptors = new Map();   // name → descriptor (params / detect / …) — see CONTEXT.md "API Descriptor"
+let   _runBaseline  = null;       // impl snapshot taken at _beginRun(); restored at _endRun()
+let   _descBaseline = null;       // descriptor snapshot, rolled back the same way
 
 // ── Blocks / toolkit extensibility hooks ─────────────────────────────────────
 // Set by blocks.js and completions.js respectively after they initialise.
@@ -39,9 +41,10 @@ function _applyToolkit(category, entries) {
 
 // ── Internal — used by app.js at startup ─────────────────────────────────────
 
-export function _registerBuiltin(name, impl) {
+export function _registerBuiltin(name, impl, descriptor = null) {
   _registry.set(name, impl);
   window[name] = impl;
+  if (descriptor) _descriptors.set(name, descriptor);
 }
 
 // ── Public API — exposed on window.registerAPI ───────────────────────────────
@@ -55,10 +58,14 @@ export function _registerBuiltin(name, impl) {
  *   ext.blocks  — array of { definition, generator } Blockly block descriptors
  *   ext.toolkit — array of { label, code, hint } snippet entries
  *   ext.category — category name for toolkit entries (default: name)
+ *   ext.params  — param-hint signatures: { method: [names] } and/or [names] for a
+ *                 callable/constructor. Derived into the editor's param hints.
+ *   ext.detect  — { effect, triggers? } usage-detection spec (reserved; see ADR 012).
  */
 export function registerAPI(name, impl, ext = null) {
   _registry.set(name, impl);
   window[name] = impl;
+  if (ext) _descriptors.set(name, ext);
 
   if (ext?.blocks?.length) {
     _applyBlocks(name, ext.blocks);
@@ -71,7 +78,8 @@ export function registerAPI(name, impl, ext = null) {
 // ── Run lifecycle ─────────────────────────────────────────────────────────────
 
 export function _beginRun() {
-  _runBaseline = new Map(_registry);
+  _runBaseline  = new Map(_registry);
+  _descBaseline = new Map(_descriptors);
 }
 
 export function _endRun() {
@@ -89,7 +97,11 @@ export function _endRun() {
       delete window[name];
     }
   }
+  // Descriptors roll back the same way — run-scoped registerAPI() descriptors vanish.
+  _descriptors.clear();
+  for (const [name, desc] of _descBaseline) _descriptors.set(name, desc);
   _runBaseline = null;
+  _descBaseline = null;
 }
 
 // ── Introspection ─────────────────────────────────────────────────────────────
@@ -100,6 +112,31 @@ export function getAPI(name) {
 
 export function listAPIs() {
   return [..._registry.keys()];
+}
+
+export function getDescriptor(name) {
+  return _descriptors.get(name);
+}
+
+/**
+ * Derive editor param-hint entries from registered descriptors — the single source
+ * the editor's PARAM_HINTS table now defers to. A descriptor's `params` may be:
+ *   { method: [names] }  → 'name.method' entries
+ *   [names]              → a bare 'name' entry (callable / constructor signature)
+ * @returns {Object<string, string[]>}  e.g. { 'pixi.tick': ['fn'] }
+ */
+export function deriveParamHints() {
+  const out = {};
+  for (const [name, desc] of _descriptors) {
+    const p = desc?.params;
+    if (!p) continue;
+    if (Array.isArray(p)) {
+      out[name] = p;
+    } else if (typeof p === 'object') {
+      for (const [method, names] of Object.entries(p)) out[`${name}.${method}`] = names;
+    }
+  }
+  return out;
 }
 
 // ── Deferred hooks — called by blocks.js / completions.js after they init ────

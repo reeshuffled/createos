@@ -13,17 +13,12 @@
 //   acquireCameraRunScoped();   // released automatically on reset — no manual release needed
 //   acquireMicRunScoped();
 
-import { onReset } from '../runtime/reset-registry.js';
+import { runScoped } from '../runtime/run-scoped.js';
 import { notify } from '../events/index.js';
 
 let _cameraStart = null, _cameraStop = null;
 let _micStart    = null, _micStop    = null;
 let _cameraCount = 0,    _micCount   = 0;
-
-// Run-scoped leases released on reset. Each entry is tagged with the editor that
-// acquired it so a reset of editor B does not release editor A's camera/mic lease
-// (which would drop the refcount to 0 and stop a stream another editor still uses).
-const _runScopedLeases = [];   // [{ handle, editorId }]
 
 // ── Registration (called by camera.js / mic.js at init time) ─────────────────
 
@@ -72,14 +67,17 @@ export function acquireMic() {
  */
 export function acquireCameraRunScoped() {
   const h = acquireCamera();
-  _runScopedLeases.push({ handle: h, editorId: window.__ar_active_editor_id });
+  // Camera is an INPUT — runScoped CORE (no keep-alive). Owner-scoped so resetting
+  // editor B does not drop a lease editor A's still-live output depends on. The lease
+  // handle's own release() is idempotent, so a manual release before reset is safe.
+  runScoped({ onStop: () => h.release() });
   return h;
 }
 
 /** Acquire the toolbar mic for a user-code consumer. Auto-released on reset. */
 export function acquireMicRunScoped() {
   const h = acquireMic();
-  _runScopedLeases.push({ handle: h, editorId: window.__ar_active_editor_id });
+  runScoped({ onStop: () => h.release() });
   return h;
 }
 
@@ -88,17 +86,4 @@ export function acquireMicRunScoped() {
 export function getCameraCount() { return _cameraCount; }
 export function getMicCount()    { return _micCount; }
 
-// ── Reset handler ─────────────────────────────────────────────────────────────
-
-function _cleanupRunScoped(editorId) {
-  // Scope to the resetting editor so a lease held by another editor's still-live
-  // output survives. editorId == null → full release (global / hard reset).
-  const survivors = [];
-  for (const l of _runScopedLeases) {
-    if (editorId == null || l.editorId == null || l.editorId === editorId) l.handle.release();
-    else survivors.push(l);
-  }
-  _runScopedLeases.length = 0;
-  _runScopedLeases.push(...survivors);
-}
-onReset(_cleanupRunScoped);
+// Reset teardown is owned by run-scoped.js (owner-filtered onReset) — see ADR 008.

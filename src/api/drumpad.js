@@ -17,7 +17,7 @@ import { mountWidgetShell, wireCaptureButton } from './widget-shell.js';
 import { onReset } from '../runtime/reset-registry.js';
 import { Take } from './performance-recorder.js';
 import { replayActions } from './replay-clock.js';
-import { registerMidiInstrument, unregisterMidiInstrument, enableMidiFor, notifyMidiFocus } from './midi-bind.js';
+import { registerMidiInstrument, unregisterMidiInstrument, notifyMidiFocus, wireMidiInstrument } from './midi-bind.js';
 
 // General MIDI percussion note → voice id (ADR 033). Common aliases included.
 // Unmapped notes are ignored.
@@ -183,24 +183,7 @@ export class Drumpad {
 
   _midiNoteOff() { /* one-shot voices — nothing to release */ }
 
-  /** Chip appearance: 'dormant' (grey, click to enable) | 'idle' | 'target'. */
-  _setMidiChip(state) {
-    const c = this._midiChip;
-    if (!c) return;
-    if (state === 'target') {
-      c.style.color = '#a6e3a1'; c.style.borderColor = '#a6e3a1';
-      c.style.opacity = '1'; c.style.boxShadow = '0 0 6px #a6e3a155';
-      c.title = 'MIDI input → this Drum Pad (GM map)';
-    } else if (state === 'idle') {
-      c.style.color = '#6c7086'; c.style.borderColor = '#313244';
-      c.style.opacity = '0.7'; c.style.boxShadow = '';
-      c.title = 'MIDI on — focus this Drum Pad to play it';
-    } else {
-      c.style.color = '#45475a'; c.style.borderColor = '#313244';
-      c.style.opacity = '0.55'; c.style.boxShadow = '';
-      c.title = 'Enable MIDI input';
-    }
-  }
+  // _setMidiChip is installed by wireMidiInstrument() — see midi-bind.js.
 
   // ── Performance capture / replay (ADR 031) ──────────────────────────────────
   // Public one-shot trigger — the replay verb. Does NOT record (replay must not
@@ -453,9 +436,11 @@ export class Drumpad {
     // ── MIDI chip (ADR 033) — opt-in / target indicator ─────────────────────────
     const midiChip = _mkBtn('🎹', '#45475a');
     midiChip.style.padding = '3px 7px';
-    this._midiChip = midiChip;
-    this._setMidiChip('dormant');
-    midiChip.addEventListener('click', () => enableMidiFor(this));
+    wireMidiInstrument(this, { chip: midiChip, tooltips: {
+      target:  'MIDI input → this Drum Pad (GM map)',
+      idle:    'MIDI on — focus this Drum Pad to play it',
+      dormant: 'Enable MIDI input',
+    }});
 
     ctrl.appendChild(playBtn);
     ctrl.appendChild(stopBtn);

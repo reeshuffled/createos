@@ -309,7 +309,7 @@ window.onload = () => {
   // PIXI.js — init once at startup (synchronous in v7). Sets window.pixi + window.Stage.
   initPixi();
   // Register pixi/Stage through the registry after initPixi() assigns them to window.
-  if (window.pixi)  _registerBuiltin('pixi',  window.pixi);
+  if (window.pixi)  _registerBuiltin('pixi',  window.pixi, { params: { tick: ['fn'] } });
   if (window.Stage) _registerBuiltin('Stage', window.Stage);
 
   const _stage = document.getElementById('wm-stage');
